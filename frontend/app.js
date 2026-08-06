@@ -1,0 +1,121 @@
+import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js';
+
+// The UI is served by FastAPI, so keeping API calls on the current origin makes
+// local startup work on any available Uvicorn port (not only 8000).
+const apiBase = window.location.origin;
+const state = { fileId: null, objectUrl: null, waves: {}, masterUrl: null };
+const els = Object.fromEntries([
+  'file-input', 'drop-zone', 'file-badge', 'track-info', 'track-name', 'track-meta', 'remove-file',
+  'genre', 'analyze-button', 'master-button', 'workspace', 'status', 'metrics', 'feedback',
+  'diagnostics-subtitle', 'master-card', 'download-button',
+].map((id) => [id, document.getElementById(id)]));
+
+const formatBytes = (bytes) => bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const endpoint = (path) => `${apiBase}${path}`;
+const sliderIds = ['highpass-hz', 'target-lufs', 'compressor-threshold', 'compressor-ratio', 'compressor-attack', 'compressor-release', 'shelf-frequency', 'shelf-gain', 'max-makeup', 'limiter-ceiling'];
+
+function showStatus(message, kind = 'info') {
+  const styles = { info: 'border-electric/35 bg-electric/10 text-slate-200', success: 'border-accent/35 bg-accent/10 text-slate-100', error: 'border-rose-400/35 bg-rose-400/10 text-rose-100' };
+  els.status.className = `mb-5 rounded-xl border px-4 py-3 text-sm ${styles[kind]}`;
+  els.status.textContent = message;
+}
+
+function destroyWave(name) { state.waves[name]?.destroy(); delete state.waves[name]; }
+function makeWave(name, url, container, color) {
+  destroyWave(name);
+  const wave = WaveSurfer.create({ container, url, height: 82, waveColor: color, progressColor: '#66e3c4', cursorColor: '#e2e8f0', cursorWidth: 1.5, barWidth: 2, barGap: 2, barRadius: 3, normalize: true });
+  wave.on('finish', () => updatePlayButton(name, false));
+  state.waves[name] = wave;
+}
+function updatePlayButton(name, playing) {
+  const button = document.querySelector(`[data-wave="${name}"]`);
+  if (button) button.textContent = playing ? 'Pause' : 'Play';
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(endpoint(path), options);
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail || 'The request could not be completed.'); }
+  return response.json();
+}
+
+function renderAnalysis(analysis, title = 'Original track') {
+  const { metrics: m, feedback } = analysis;
+  const cards = [
+    ['Integrated loudness', `${m.integrated_lufs} LUFS`], ['True peak', `${m.true_peak_dbtp} dBTP`],
+    ['Loudness range', `${m.loudness_range_lu} LU`], ['Spectral centroid', `${Math.round(m.spectral_centroid_hz).toLocaleString()} Hz`],
+  ];
+  els['diagnostics-subtitle'].textContent = `${title} · ${analysis.duration_seconds}s · ${analysis.sample_rate.toLocaleString()} Hz`;
+  els.metrics.innerHTML = cards.map(([label, value]) => `<div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>`).join('');
+  els.feedback.innerHTML = feedback.map((item) => `<div class="feedback-note">${item}</div>`).join('');
+}
+
+function updateSliderLabel(input) {
+  const output = document.querySelector(`output[for="${input.id}"]`);
+  if (!output) return;
+  const value = Number(input.value);
+  if (input.dataset.format === 'ratio') output.textContent = `${value}:1`;
+  else if (input.dataset.format === 'khz') output.textContent = `${(value / 1000).toFixed(1)} kHz`;
+  else output.textContent = `${value < 0 ? '−' : ''}${Math.abs(value)}${input.dataset.unit || ''}`;
+}
+
+function customSettings() {
+  return {
+    highpass_hz: Number(document.getElementById('highpass-hz').value),
+    compressor_enabled: document.getElementById('compressor-enabled').checked,
+    compressor_threshold_db: Number(document.getElementById('compressor-threshold').value),
+    compressor_ratio: Number(document.getElementById('compressor-ratio').value),
+    compressor_attack_ms: Number(document.getElementById('compressor-attack').value),
+    compressor_release_ms: Number(document.getElementById('compressor-release').value),
+    high_shelf_frequency_hz: Number(document.getElementById('shelf-frequency').value),
+    high_shelf_gain_db: Number(document.getElementById('shelf-gain').value),
+    target_lufs: Number(document.getElementById('target-lufs').value),
+    max_makeup_gain_db: Number(document.getElementById('max-makeup').value),
+    limiter_ceiling_dbtp: Number(document.getElementById('limiter-ceiling').value),
+  };
+}
+
+async function uploadFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.wav')) { showStatus('Please choose a valid .wav audio file.', 'error'); return; }
+  if (file.size > 250 * 1024 * 1024) { showStatus('This file is larger than the 250 MB limit.', 'error'); return; }
+  resetSession(false); showStatus('Uploading and validating your WAV…'); els.workspace.classList.remove('hidden');
+  const form = new FormData(); form.append('file', file);
+  try {
+    const result = await api('/api/upload', { method: 'POST', body: form });
+    state.fileId = result.file_id; state.objectUrl = URL.createObjectURL(file);
+    els['track-name'].textContent = result.filename; els['track-meta'].textContent = `${formatBytes(file.size)} · ${result.audio.sample_rate.toLocaleString()} Hz · ${result.audio.channels} ch`;
+    els['track-info'].classList.remove('hidden'); els['file-badge'].textContent = 'Loaded'; els['file-badge'].classList.remove('hidden');
+    els.analyzeButton = els['analyze-button']; els.analyzeButton.disabled = false; els['master-button'].disabled = false;
+    makeWave('original', state.objectUrl, '#waveform-original', '#61708d');
+    showStatus('Track ready. Analyze it first, or go straight to automaster.', 'success');
+  } catch (error) { showStatus(error.message, 'error'); }
+}
+
+function resetSession(clearInput = true) {
+  destroyWave('original'); destroyWave('mastered'); if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
+  state.fileId = null; state.objectUrl = null; state.masterUrl = null; els['track-info'].classList.add('hidden'); els['file-badge'].classList.add('hidden'); els['analyze-button'].disabled = true; els['master-button'].disabled = true; els['master-card'].classList.add('hidden'); els.metrics.innerHTML = ''; els.feedback.innerHTML = ''; els['diagnostics-subtitle'].textContent = 'Run an analysis to begin.'; if (clearInput) els['file-input'].value = '';
+}
+
+async function withBusy(button, task, pendingLabel) {
+  const old = button.innerHTML; button.disabled = true; button.innerHTML = `<span>${pendingLabel}</span><span class="animate-pulse">•••</span>`;
+  try { await task(); } finally { button.disabled = !state.fileId; button.innerHTML = old; }
+}
+
+async function analyze() {
+  if (!state.fileId) return;
+  await withBusy(els['analyze-button'], async () => { showStatus('Measuring loudness, peaks, dynamics, and tone…'); const analysis = await api(`/api/analyze/${state.fileId}?genre=${encodeURIComponent(els.genre.value)}`); renderAnalysis(analysis); showStatus('Analysis complete. Review the diagnostics or create a master.', 'success'); }, 'Analyzing');
+}
+async function master() {
+  if (!state.fileId) return;
+  await withBusy(els['master-button'], async () => { showStatus('Building your genre-tuned master. This can take a moment for long tracks…'); const payload = { genre: els.genre.value }; if (payload.genre === 'custom') payload.custom_settings = customSettings(); const result = await api(`/api/master/${state.fileId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); renderAnalysis(result.after, `Mastered ${result.genre.toUpperCase()}`); state.masterUrl = endpoint(result.stream_url); makeWave('mastered', state.masterUrl, '#waveform-mastered', '#7c8ae6'); els['download-button'].href = endpoint(result.download_url); els['master-card'].classList.remove('hidden'); showStatus(`Master complete — targeted to ${result.target_lufs} LUFS.`, 'success'); }, 'Mastering');
+}
+
+els['file-input'].addEventListener('change', (event) => uploadFile(event.target.files[0]));
+els.genre.addEventListener('change', () => document.getElementById('custom-controls').classList.toggle('hidden', els.genre.value !== 'custom'));
+sliderIds.forEach((id) => document.getElementById(id).addEventListener('input', (event) => updateSliderLabel(event.target)));
+els['drop-zone'].addEventListener('dragover', (event) => { event.preventDefault(); els['drop-zone'].classList.add('dragging'); });
+els['drop-zone'].addEventListener('dragleave', () => els['drop-zone'].classList.remove('dragging'));
+els['drop-zone'].addEventListener('drop', (event) => { event.preventDefault(); els['drop-zone'].classList.remove('dragging'); uploadFile(event.dataTransfer.files[0]); });
+els['remove-file'].addEventListener('click', () => { resetSession(); els.workspace.classList.add('hidden'); });
+els['analyze-button'].addEventListener('click', () => analyze().catch((error) => showStatus(error.message, 'error')));
+els['master-button'].addEventListener('click', () => master().catch((error) => showStatus(error.message, 'error')));
+document.querySelectorAll('.play-button').forEach((button) => button.addEventListener('click', () => { const name = button.dataset.wave; const wave = state.waves[name]; if (!wave) return; wave.playPause(); window.setTimeout(() => updatePlayButton(name, wave.isPlaying()), 0); }));

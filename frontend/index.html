@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A local WAV analysis and automated mastering workspace." />
+    <title>Clearwave — Local Audio Mastering</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: { ink: '#09111f', panel: '#111c2f', accent: '#66e3c4', electric: '#8898ff' },
+            boxShadow: { glow: '0 0 50px rgba(102, 227, 196, .13)' },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="min-h-screen bg-ink text-slate-100 antialiased">
+    <div class="orb orb-left"></div><div class="orb orb-right"></div>
+    <main class="relative mx-auto max-w-6xl px-5 pb-16 pt-7 sm:px-8 lg:px-10">
+      <header class="flex items-center justify-between gap-4">
+        <a class="flex items-center gap-3" href="/" aria-label="Clearwave home">
+          <span class="grid h-10 w-10 place-items-center rounded-xl bg-accent text-xl text-ink shadow-glow">◒</span>
+          <span class="text-lg font-extrabold tracking-tight">clearwave<span class="text-accent">.</span></span>
+        </a>
+        <span class="rounded-full border border-slate-700/80 bg-slate-900/60 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.16em] text-slate-400">Local processing</span>
+      </header>
+
+      <section class="mx-auto max-w-3xl pb-11 pt-16 text-center sm:pb-14 sm:pt-24">
+        <p class="mb-4 font-mono text-xs font-medium uppercase tracking-[.22em] text-accent">WAV diagnostics &amp; mastering</p>
+        <h1 class="text-4xl font-extrabold leading-[1.07] tracking-tight text-white sm:text-6xl">Give your mix a<br /><span class="gradient-text">finished edge.</span></h1>
+        <p class="mx-auto mt-5 max-w-xl text-sm leading-6 text-slate-400 sm:text-base">Upload a lossless WAV, understand what it needs, then create a genre-tuned master without sending your audio anywhere.</p>
+      </section>
+
+      <section class="grid gap-6 lg:grid-cols-[1.1fr_.9fr]">
+        <div class="rounded-3xl border border-slate-700/60 bg-panel/80 p-5 shadow-glow backdrop-blur sm:p-7">
+          <div class="mb-5 flex items-center justify-between gap-3">
+            <div><h2 class="text-lg font-bold">Your track</h2><p class="mt-1 text-sm text-slate-400">WAV only · up to 250 MB</p></div>
+            <span id="file-badge" class="hidden rounded-full bg-accent/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-accent"></span>
+          </div>
+          <label id="drop-zone" class="drop-zone group flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-600 bg-slate-950/35 p-6 text-center transition">
+            <input id="file-input" class="sr-only" type="file" accept=".wav,audio/wav" />
+            <span class="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-slate-800 text-2xl transition group-hover:bg-accent group-hover:text-ink">↥</span>
+            <span class="text-base font-bold text-white">Drop your WAV here</span>
+            <span class="mt-1.5 text-sm text-slate-400">or <span class="text-accent underline underline-offset-4">browse files</span></span>
+          </label>
+          <div id="track-info" class="mt-4 hidden rounded-xl border border-slate-700/60 bg-slate-950/40 px-4 py-3">
+            <div class="flex items-center gap-3"><span class="grid h-9 w-9 place-items-center rounded-lg bg-electric/15 text-electric">♪</span><div class="min-w-0"><p id="track-name" class="truncate text-sm font-semibold text-white"></p><p id="track-meta" class="mt-0.5 font-mono text-[11px] text-slate-400"></p></div><button id="remove-file" class="ml-auto rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-white" type="button">Remove</button></div>
+          </div>
+        </div>
+
+        <div class="rounded-3xl border border-slate-700/60 bg-panel/80 p-5 backdrop-blur sm:p-7">
+          <h2 class="text-lg font-bold">Mastering profile</h2><p class="mt-1 text-sm text-slate-400">Choose the intended listening context.</p>
+          <label class="mt-6 block text-xs font-bold uppercase tracking-[.13em] text-slate-400" for="genre">Genre</label>
+          <div class="relative mt-2"><select id="genre" class="w-full appearance-none rounded-xl border border-slate-600 bg-slate-950/70 px-4 py-3.5 text-sm font-semibold text-white outline-none transition focus:border-accent"><option value="edm">EDM — punchy &amp; loud</option><option value="hip-hop">Hip-Hop — weight &amp; clarity</option><option value="rock">Rock — impact &amp; energy</option><option value="pop">Pop — polished &amp; balanced</option><option value="classical">Classical — preserve dynamics</option><option value="acoustic">Acoustic — natural &amp; warm</option><option value="custom">Custom — full control</option></select><span class="pointer-events-none absolute right-4 top-3.5 text-slate-400">⌄</span></div>
+          <div id="custom-controls" class="custom-controls mt-5 hidden rounded-2xl border border-electric/25 bg-slate-950/45 p-4">
+            <div class="mb-4 flex items-center justify-between"><div><h3 class="text-sm font-bold text-white">Custom chain</h3><p class="mt-0.5 text-xs text-slate-400">Settings are applied in chain order.</p></div><span class="font-mono text-[10px] uppercase tracking-wider text-electric">Advanced</span></div>
+            <div class="control-grid">
+              <label class="slider-control">High-pass <output for="highpass-hz">25 Hz</output><input id="highpass-hz" type="range" min="20" max="80" step="1" value="25" data-unit=" Hz" /></label>
+              <label class="slider-control">Target loudness <output for="target-lufs">−14 LUFS</output><input id="target-lufs" type="range" min="-24" max="-6" step="1" value="-14" data-unit=" LUFS" /></label>
+              <label class="slider-control">Compressor threshold <output for="compressor-threshold">−18 dB</output><input id="compressor-threshold" type="range" min="-60" max="0" step="1" value="-18" data-unit=" dB" /></label>
+              <label class="slider-control">Compressor ratio <output for="compressor-ratio">3:1</output><input id="compressor-ratio" type="range" min="1" max="20" step="0.5" value="3" data-format="ratio" /></label>
+              <label class="slider-control">Attack <output for="compressor-attack">10 ms</output><input id="compressor-attack" type="range" min="0.1" max="200" step="0.1" value="10" data-unit=" ms" /></label>
+              <label class="slider-control">Release <output for="compressor-release">100 ms</output><input id="compressor-release" type="range" min="10" max="1000" step="5" value="100" data-unit=" ms" /></label>
+              <label class="slider-control">High-shelf frequency <output for="shelf-frequency">10.0 kHz</output><input id="shelf-frequency" type="range" min="4000" max="18000" step="100" value="10000" data-format="khz" /></label>
+              <label class="slider-control">High-shelf gain <output for="shelf-gain">0 dB</output><input id="shelf-gain" type="range" min="-12" max="12" step="0.5" value="0" data-unit=" dB" /></label>
+              <label class="slider-control">Maximum makeup <output for="max-makeup">12 dB</output><input id="max-makeup" type="range" min="0" max="24" step="0.5" value="12" data-unit=" dB" /></label>
+              <label class="slider-control">Limiter ceiling <output for="limiter-ceiling">−1 dBTP</output><input id="limiter-ceiling" type="range" min="-6" max="-0.1" step="0.1" value="-1" data-unit=" dBTP" /></label>
+            </div>
+            <label class="mt-4 flex cursor-pointer items-center justify-between rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2.5 text-xs font-semibold text-slate-200">Compressor enabled <input id="compressor-enabled" class="h-4 w-4 accent-[#66e3c4]" type="checkbox" checked /></label>
+          </div>
+          <div class="mt-6 space-y-3">
+            <button id="analyze-button" class="action-button secondary" disabled type="button"><span>Analyze only</span><span>→</span></button>
+            <button id="master-button" class="action-button primary" disabled type="button"><span>Automaster</span><span>✦</span></button>
+          </div>
+          <p class="mt-5 text-center text-xs leading-5 text-slate-500">Your source file is never changed. A separate 24-bit master is created for download.</p>
+        </div>
+      </section>
+
+      <section id="workspace" class="mt-8 hidden">
+        <div id="status" class="mb-5 hidden rounded-xl border px-4 py-3 text-sm" role="status" aria-live="polite"></div>
+        <div class="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
+          <div class="space-y-6">
+            <article class="rounded-3xl border border-slate-700/60 bg-panel/80 p-5 sm:p-7">
+              <div class="mb-5 flex items-center justify-between"><div><h2 class="text-lg font-bold">Original</h2><p class="mt-1 text-sm text-slate-400">Your uploaded WAV</p></div><button class="play-button" data-wave="original" type="button">Play</button></div>
+              <div id="waveform-original" class="waveform" aria-label="Original track waveform"></div>
+            </article>
+            <article id="master-card" class="hidden rounded-3xl border border-accent/30 bg-panel/80 p-5 shadow-glow sm:p-7">
+              <div class="mb-5 flex flex-wrap items-center justify-between gap-3"><div><div class="flex items-center gap-2"><h2 class="text-lg font-bold">Mastered</h2><span class="rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-accent">Ready</span></div><p class="mt-1 text-sm text-slate-400">Compare the finished version</p></div><button class="play-button" data-wave="mastered" type="button">Play</button></div>
+              <div id="waveform-mastered" class="waveform" aria-label="Mastered track waveform"></div>
+              <a id="download-button" class="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3.5 text-sm font-extrabold text-ink transition hover:bg-[#9cf0da]" href="#" download>Download mastered WAV <span>↓</span></a>
+            </article>
+          </div>
+          <aside class="rounded-3xl border border-slate-700/60 bg-panel/80 p-5 sm:p-7"><div class="flex items-center justify-between"><div><h2 class="text-lg font-bold">Diagnostics</h2><p id="diagnostics-subtitle" class="mt-1 text-sm text-slate-400">Run an analysis to begin.</p></div><span class="text-xl text-accent">⌁</span></div><div id="metrics" class="mt-6 grid grid-cols-2 gap-3"></div><div id="feedback" class="mt-5 space-y-2"></div></aside>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+python-multipart>=0.0.9,<1.0
+pedalboard>=0.9,<1.0
+librosa>=0.10,<1.0
+pyloudnorm>=0.1.1,<1.0
+soundfile>=0.12,<1.0
+scipy>=1.11,<2.0
+numpy>=1.24,<3.0
