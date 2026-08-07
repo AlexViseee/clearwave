@@ -1,10 +1,12 @@
 const MAX_UPLOAD_BYTES = 1 * 1024 * 1024 * 1024;
-const state = { tracks: [], context: null, master: null, playing: false, soloKey: null, pendingAnalysis: null, analyzingAll: false, eqEditingIndex: null, eqBandIndex: 0, playOffset: 0, startedAt: 0, progressFrame: 0 };
+const isProWorkspace = new URLSearchParams(window.location.search).get('workspace') === 'pro';
+const state = { tracks: [], context: null, master: null, playing: false, soloKey: null, pendingAnalysis: null, analyzingAll: false, eqEditingIndex: null, eqBandIndex: 0, playOffset: 0, startedAt: 0, progressFrame: 0, proMaster: isProWorkspace, pixelsPerSecond: 22, markers: [], loop: { enabled: false, start: 0, end: 8 }, arrangementEdit: null };
 const els = Object.fromEntries([
   'stem-input', 'add-stems', 'session-summary', 'daw-genre', 'daw-premaster',
   'play-preview', 'pause-preview', 'stop-preview', 'playback-status', 'playback-progress', 'playback-time', 'empty-desk', 'daw-track-list',
   'daw-status', 'bounce-button', 'analyze-all', 'analysis-dialog',
   'analysis-track-name', 'analysis-results', 'analysis-suggestion-title', 'analysis-suggestion', 'apply-auto-eq', 'cancel-analysis', 'eq-dialog', 'eq-track-name', 'eq-band-tabs', 'eq-filter-type', 'eq-frequency', 'eq-gain', 'eq-q', 'eq-close', 'eq-curve-line',
+  'open-pro-master', 'daw-workspace-eyebrow', 'daw-workspace-title', 'daw-workspace-description', 'arrangement-panel', 'pro-session-setup', 'arrangement-transport', 'arrangement-empty', 'arrangement-scroll', 'arrangement-canvas', 'arrangement-ruler', 'arrangement-loop-range', 'arrangement-markers', 'arrangement-tracks', 'arrangement-playhead', 'arrangement-zoom-out', 'arrangement-zoom-in', 'arrangement-zoom-label', 'arrangement-fit', 'arrangement-loop', 'arrangement-add-marker', 'arrangement-sync-mixer',
 ].map((id) => [id, document.getElementById(id)]));
 
 const bytes = (value) => value < 1024 * 1024 ? `${Math.round(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`;
@@ -13,6 +15,14 @@ const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => (
 const db = (value) => value <= 0 ? '−∞' : `${(20 * Math.log10(value)).toFixed(1)} dBFS`;
 const hz = (value) => value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} kHz` : `${Math.round(value)} Hz`;
 const defaultBands = () => [{ filterType: 'highpass', frequencyHz: 30, gainDb: 0, q: .71 }, { filterType: 'lowshelf', frequencyHz: 120, gainDb: 0, q: .71 }, { filterType: 'peaking', frequencyHz: 400, gainDb: 0, q: 1 }, { filterType: 'peaking', frequencyHz: 1800, gainDb: 0, q: 1 }, { filterType: 'highshelf', frequencyHz: 7000, gainDb: 0, q: .71 }, { filterType: 'lowpass', frequencyHz: 20000, gainDb: 0, q: .71 }];
+
+if (isProWorkspace) {
+  document.body.classList.add('pro-workspace');
+  document.title = 'Clearwave PRO Master';
+  els['daw-workspace-eyebrow'].textContent = 'PRO Master · arrangement workspace';
+  els['daw-workspace-title'].innerHTML = 'Shape the session<br /><span class="gradient-text">before the final master.</span>';
+  els['daw-workspace-description'].textContent = 'Arrange stems on a dedicated timeline, then use the same EQ, analysis, live preview, and premaster rendering controls.';
+}
 
 function status(message, type = 'info') {
   const styles = { info: 'border-electric/35 bg-electric/10 text-slate-200', success: 'border-accent/35 bg-accent/10 text-slate-100', error: 'border-rose-400/35 bg-rose-400/10 text-rose-100' };
@@ -42,9 +52,11 @@ function updatePlaybackLabel() {
   else els['playback-status'].textContent = soloTrack ? `Solo armed: ${soloTrack.file.name}` : 'Preview stopped';
 }
 
-function maxDuration() { return Math.max(0, ...state.tracks.map((track) => track.buffer.duration)); }
+function clipDuration(track) { return Math.max(0.01, track.trimEnd - track.trimStart); }
+function sessionDuration() { return Math.max(0, ...state.tracks.map((track) => track.timelineStart + clipDuration(track))); }
+function currentPosition() { return state.playing ? Math.min(sessionDuration(), state.playOffset + (context().currentTime - state.startedAt)) : state.playOffset; }
 function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`; }
-function updateProgress() { const duration = maxDuration(); const position = state.playing ? Math.min(duration, state.playOffset + (context().currentTime - state.startedAt)) : state.playOffset; els['playback-progress'].value = duration ? (position / duration) * 100 : 0; els['playback-time'].textContent = `${formatTime(position)} / ${formatTime(duration)}`; if (state.playing && position < duration) state.progressFrame = requestAnimationFrame(updateProgress); else if (state.playing) stop(); }
+function updateProgress() { const duration = sessionDuration(); const position = currentPosition(); els['playback-progress'].value = duration ? (position / duration) * 100 : 0; els['playback-time'].textContent = `${formatTime(position)} / ${formatTime(duration)}`; updateArrangementTransport(position); if (state.playing && state.loop.enabled && position >= state.loop.end) { state.playOffset = state.loop.start; clearSources(); state.playing = false; play(); return; } if (state.playing && position < duration) state.progressFrame = requestAnimationFrame(updateProgress); else if (state.playing) stop(); }
 
 function applyTrack(track) {
   if (!track.gainNode) return;
@@ -82,7 +94,195 @@ function render() {
   els['analyze-all'].disabled = !state.tracks.length || state.analyzingAll;
   els['bounce-button'].disabled = !ready;
   els['daw-track-list'].innerHTML = state.tracks.map(trackRow).join('');
+  renderArrangement();
   updatePlaybackLabel();
+}
+
+function exportSessionForPro() {
+  return {
+    tracks: state.tracks.map((track) => ({
+      file: track.file, key: track.key, gainDb: track.gainDb, pan: track.pan, muted: track.muted,
+      eqBands: track.eqBands.map((band) => ({ ...band })), timelineStart: track.timelineStart,
+      trimStart: track.trimStart, trimEnd: track.trimEnd,
+    })),
+    genre: els['daw-genre'].value,
+    preMasterEachStem: els['daw-premaster'].checked,
+    markers: state.markers.map((marker) => ({ ...marker })),
+    loop: { ...state.loop },
+  };
+}
+
+function arrangeProWorkspace() {
+  if (!isProWorkspace) return;
+  const playbackBar = els['playback-progress'].closest('.playback-bar');
+  [els['analyze-all'], els['pause-preview'], els['stop-preview'], els['play-preview'], playbackBar].forEach((element) => els['arrangement-transport'].append(element));
+  const setup = document.querySelector('main > section.grid > aside');
+  els['pro-session-setup'].append(setup);
+  setup.append(els['daw-status'], els['bounce-button']);
+}
+
+function applyProSessionInMixer(session) {
+  if (!session?.tracks?.length) return false;
+  const byKey = new Map(session.tracks.map((track) => [track.key, track]));
+  let updated = 0;
+  state.tracks.forEach((track) => {
+    const incoming = byKey.get(track.key);
+    if (!incoming) return;
+    track.gainDb = incoming.gainDb;
+    track.pan = incoming.pan;
+    track.muted = incoming.muted;
+    track.eqBands = incoming.eqBands.map((band) => ({ ...band }));
+    track.timelineStart = incoming.timelineStart;
+    track.trimStart = incoming.trimStart;
+    track.trimEnd = incoming.trimEnd;
+    applyTrack(track);
+    updated += 1;
+  });
+  state.markers = Array.isArray(session.markers) ? session.markers.map((marker) => ({ ...marker })) : [];
+  state.loop = session.loop ? { ...state.loop, ...session.loop } : state.loop;
+  els['daw-genre'].value = session.genre || '';
+  els['daw-premaster'].checked = Boolean(session.preMasterEachStem);
+  render();
+  status(`PRO Master settings were synced to ${updated} mixer stem${updated === 1 ? '' : 's'}.`, 'success');
+  return true;
+}
+
+window.applyClearwaveProMasterSession = applyProSessionInMixer;
+
+async function importSessionFromMixer() {
+  const session = window.opener?.clearwaveProMasterSession;
+  if (!session?.tracks?.length) return;
+  status('Opening the current mixer session in PRO Master...');
+  try {
+    const audio = context();
+    const tracks = await Promise.all(session.tracks.map(async (source) => ({
+      ...source,
+      buffer: await audio.decodeAudioData(await source.file.arrayBuffer()),
+      source: null, gainNode: null, panNode: null, eqNodes: [],
+    })));
+    state.tracks = tracks;
+    state.markers = Array.isArray(session.markers) ? session.markers.map((marker) => ({ ...marker })) : [];
+    state.loop = session.loop ? { ...state.loop, ...session.loop } : state.loop;
+    els['daw-genre'].value = session.genre || '';
+    els['daw-premaster'].checked = Boolean(session.preMasterEachStem);
+    render();
+    status(`PRO Master opened with ${tracks.length} current stem${tracks.length === 1 ? '' : 's'} and their mix settings.`, 'success');
+  } catch (error) {
+    status(error.message || 'The mixer session could not be opened in PRO Master.', 'error');
+  }
+}
+
+function arrangementDuration() { return Math.max(12, sessionDuration(), state.loop.enabled ? state.loop.end : 0, ...state.markers.map((marker) => marker.time + 2)); }
+function timelineTickStep(duration) { return duration <= 30 ? 2 : duration <= 90 ? 5 : duration <= 300 ? 15 : 30; }
+function arrangementClipStyle(track) { return `left:${track.timelineStart * state.pixelsPerSecond}px;width:${Math.max(42, clipDuration(track) * state.pixelsPerSecond)}px`; }
+function timelineLabelWidth() { return state.proMaster && window.matchMedia('(min-width: 900px)').matches ? 288 : window.matchMedia('(max-width: 560px)').matches ? 104 : 144; }
+const arrangementColors = ['#397cf0', '#35b95c', '#e8892c', '#8166ef', '#e74d71', '#25aeb8', '#c56be9', '#c9a83a'];
+function arrangementWaveformPath(buffer, steps = 112) {
+  const channel = buffer.getChannelData(0);
+  const bucket = channel.length / steps;
+  let path = '';
+  for (let point = 0; point < steps; point += 1) {
+    const start = Math.floor(point * bucket);
+    const end = Math.min(channel.length, Math.ceil((point + 1) * bucket));
+    const stride = Math.max(1, Math.ceil((end - start) / 36));
+    let peak = 0;
+    for (let sample = start; sample < end; sample += stride) peak = Math.max(peak, Math.abs(channel[sample]));
+    const x = (point / (steps - 1)) * 120;
+    const height = Math.min(11, peak * 11);
+    path += `M${x.toFixed(2)} ${(12 - height).toFixed(2)}V${(12 + height).toFixed(2)}`;
+  }
+  return path;
+}
+
+function renderArrangement() {
+  els['arrangement-panel'].classList.toggle('hidden', !state.proMaster);
+  if (!state.proMaster) return;
+  const hasTracks = state.tracks.length > 0;
+  els['arrangement-empty'].classList.toggle('hidden', hasTracks);
+  els['arrangement-scroll'].classList.toggle('hidden', !hasTracks);
+  if (!hasTracks) return;
+  const duration = arrangementDuration();
+  const labelWidth = timelineLabelWidth();
+  els['arrangement-canvas'].style.width = `${labelWidth + duration * state.pixelsPerSecond + 20}px`;
+  els['arrangement-canvas'].style.setProperty('--timeline-label-width', `${labelWidth}px`);
+  els['arrangement-canvas'].style.setProperty('--second-width', `${state.pixelsPerSecond}px`);
+  els['arrangement-zoom-label'].textContent = `${Math.round(state.pixelsPerSecond / 22 * 100)}%`;
+  const step = timelineTickStep(duration);
+  els['arrangement-ruler'].innerHTML = Array.from({ length: Math.ceil(duration / step) + 1 }, (_, index) => `<span class="ruler-tick" style="left:${index * step * state.pixelsPerSecond}px">${formatTime(index * step)}</span>`).join('');
+  els['arrangement-tracks'].innerHTML = state.tracks.map((track, index) => `<div class="arrangement-track"><div class="arrangement-track-label"><div class="arrangement-track-title"><span class="arrangement-track-dot" style="background:${arrangementColors[index % arrangementColors.length]}"></span><span title="${escapeHtml(track.file.name)}">${escapeHtml(track.file.name)}</span></div><div class="arrangement-track-controls"><label class="arrangement-track-slider"><span>Gain <output>${track.gainDb > 0 ? '+' : ''}${track.gainDb.toFixed(1)}</output></span><input type="range" min="-24" max="12" step="0.5" value="${track.gainDb}" data-arrangement-track="${index}" data-arrangement-control="gain" /></label><label class="arrangement-track-slider"><span>Pan <output>${track.pan === 0 ? 'C' : `${track.pan < 0 ? 'L' : 'R'}${Math.abs(track.pan)}`}</output></span><input type="range" min="-100" max="100" step="1" value="${track.pan}" data-arrangement-track="${index}" data-arrangement-control="pan" /></label><span class="arrangement-track-actions"><button type="button" class="arrangement-track-button ${state.soloKey === track.key ? 'active solo' : ''}" data-arrangement-track="${index}" data-arrangement-action="solo">S</button><button type="button" class="arrangement-track-button ${track.muted ? 'active mute' : ''}" data-arrangement-track="${index}" data-arrangement-action="mute">M</button><button type="button" class="arrangement-track-button analyze" data-arrangement-track="${index}" data-arrangement-action="analyze">Analyze</button><button type="button" class="arrangement-track-button eq" data-arrangement-track="${index}" data-arrangement-action="eq">EQ</button></span></div></div><div class="arrangement-lane"><div class="arrangement-clip" data-arrangement-clip="${index}" style="${arrangementClipStyle(track)};--clip-color:${arrangementColors[index % arrangementColors.length]}" title="Drag to move. Drag either edge to trim."><button type="button" class="arrangement-handle start" data-arrangement-handle="trim-start" aria-label="Trim start of ${escapeHtml(track.file.name)}"></button><span class="arrangement-clip-name">${escapeHtml(track.file.name)}</span><svg class="arrangement-waveform" viewBox="0 0 120 24" preserveAspectRatio="none" aria-hidden="true"><path d="${arrangementWaveformPath(track.buffer)}" /></svg><button type="button" class="arrangement-handle end" data-arrangement-handle="trim-end" aria-label="Trim end of ${escapeHtml(track.file.name)}"></button></div></div></div>`).join('');
+  els['arrangement-markers'].innerHTML = state.markers.map((marker, index) => `<div class="arrangement-marker" style="left:${marker.time * state.pixelsPerSecond}px"><span>${escapeHtml(marker.label)}</span><button type="button" data-remove-marker="${index}" aria-label="Remove ${escapeHtml(marker.label)}">x</button></div>`).join('');
+  els['arrangement-loop'].textContent = state.loop.enabled ? `Loop ${formatTime(state.loop.start)}-${formatTime(state.loop.end)}` : 'Loop off';
+  els['arrangement-loop'].classList.toggle('active', state.loop.enabled);
+  els['arrangement-loop-range'].classList.toggle('hidden', !state.loop.enabled);
+  els['arrangement-loop-range'].style.left = `${labelWidth + state.loop.start * state.pixelsPerSecond}px`;
+  els['arrangement-loop-range'].style.width = `${Math.max(2, (state.loop.end - state.loop.start) * state.pixelsPerSecond)}px`;
+  updateArrangementTransport(currentPosition());
+}
+
+function updateArrangementTransport(position = currentPosition()) {
+  if (!state.proMaster || !els['arrangement-playhead']) return;
+  els['arrangement-playhead'].style.left = `${timelineLabelWidth() + position * state.pixelsPerSecond}px`;
+}
+
+function refreshLiveArrangement() {
+  if (!state.playing) return;
+  const position = currentPosition();
+  clearSources();
+  state.playing = false;
+  state.playOffset = position;
+  play().catch((error) => status(error.message || 'Playback could not restart after the arrangement edit.', 'error'));
+}
+
+function beginArrangementEdit(event) {
+  const clip = event.target.closest('[data-arrangement-clip]');
+  if (!clip) return;
+  const index = Number(clip.dataset.arrangementClip);
+  const track = state.tracks[index];
+  if (!track) return;
+  event.preventDefault();
+  const mode = event.target.closest('[data-arrangement-handle]')?.dataset.arrangementHandle || 'move';
+  state.arrangementEdit = { index, mode, originX: event.clientX, timelineStart: track.timelineStart, trimStart: track.trimStart, trimEnd: track.trimEnd };
+  clip.setPointerCapture?.(event.pointerId);
+}
+
+function moveArrangementEdit(event) {
+  const edit = state.arrangementEdit;
+  if (!edit) return;
+  const track = state.tracks[edit.index];
+  if (!track) return;
+  const delta = (event.clientX - edit.originX) / state.pixelsPerSecond;
+  if (edit.mode === 'move') track.timelineStart = Math.max(0, edit.timelineStart + delta);
+  if (edit.mode === 'trim-start') {
+    const absoluteEnd = edit.timelineStart + (edit.trimEnd - edit.trimStart);
+    const nextStart = Math.min(absoluteEnd - .05, Math.max(0, edit.timelineStart + delta));
+    track.timelineStart = nextStart;
+    track.trimStart = edit.trimStart + (nextStart - edit.timelineStart);
+  }
+  if (edit.mode === 'trim-end') track.trimEnd = Math.max(edit.trimStart + .05, Math.min(track.buffer.duration, edit.trimEnd + delta));
+  const clip = els['arrangement-tracks'].querySelector(`[data-arrangement-clip="${edit.index}"]`);
+  if (clip) clip.style.cssText = arrangementClipStyle(track);
+  updateArrangementTransport();
+}
+
+function finishArrangementEdit() {
+  if (!state.arrangementEdit) return;
+  state.arrangementEdit = null;
+  renderArrangement();
+  refreshLiveArrangement();
+}
+
+function addMarker() {
+  const time = Math.max(0, Math.min(sessionDuration(), currentPosition()));
+  state.markers.push({ time, label: `Marker ${state.markers.length + 1}` });
+  renderArrangement();
+}
+
+function fitArrangementToView() {
+  const duration = sessionDuration();
+  if (!duration) return;
+  const availableWidth = Math.max(80, els['arrangement-scroll'].clientWidth - timelineLabelWidth() - 28);
+  state.pixelsPerSecond = Math.max(1, Math.min(60, availableWidth / duration));
+  renderArrangement();
 }
 
 async function addFiles(fileList) {
@@ -96,7 +296,7 @@ async function addFiles(fileList) {
   try {
     const audio = context();
     const decoded = await Promise.all(unique.map(async (file) => ({ file, buffer: await audio.decodeAudioData(await file.arrayBuffer()) })));
-    state.tracks.push(...decoded.map(({ file, buffer }) => ({ key: keyFor(file), file, buffer, gainDb: 0, pan: 0, muted: false, eqBands: defaultBands(), source: null, gainNode: null, panNode: null, eqNodes: [] })));
+    state.tracks.push(...decoded.map(({ file, buffer }) => ({ key: keyFor(file), file, buffer, gainDb: 0, pan: 0, muted: false, eqBands: defaultBands(), source: null, gainNode: null, panNode: null, eqNodes: [], timelineStart: 0, trimStart: 0, trimEnd: buffer.duration })));
     els['stem-input'].value = '';
     render();
     status('Tracks are ready. Solo a stem, analyze it, or preview the whole mix.', 'success');
@@ -306,7 +506,7 @@ function stop() {
 
 function pause() {
   if (!state.playing) return;
-  state.playOffset = Math.min(maxDuration(), state.playOffset + (context().currentTime - state.startedAt));
+  state.playOffset = currentPosition();
   clearSources(); state.playing = false;
   els['pause-preview'].disabled = true; els['stop-preview'].disabled = false;
   els['play-preview'].textContent = '▶ Resume'; updatePlaybackLabel(); updateProgress();
@@ -319,6 +519,8 @@ async function play() {
   await audio.resume();
   const start = audio.currentTime + 0.04;
   state.tracks.forEach((track) => {
+    const clipEnd = track.timelineStart + clipDuration(track);
+    if (state.playOffset >= clipEnd) return;
     const source = audio.createBufferSource();
     const gain = audio.createGain();
     const eqNodes = track.eqBands.map(() => audio.createBiquadFilter());
@@ -332,7 +534,11 @@ async function play() {
     track.panNode = pan;
     track.eqNodes = eqNodes;
     applyTrack(track);
-    source.start(start, state.playOffset);
+    const timelineDelay = Math.max(0, track.timelineStart - state.playOffset);
+    const sourceOffset = track.trimStart + Math.max(0, state.playOffset - track.timelineStart);
+    const sourceDuration = Math.max(0, track.trimEnd - sourceOffset);
+    if (!sourceDuration) return;
+    source.start(start + timelineDelay, sourceOffset, sourceDuration);
   });
   state.playing = true;
   state.startedAt = start;
@@ -344,7 +550,7 @@ async function play() {
 }
 
 function bounceSettings() {
-  return state.tracks.map((track) => ({ gain_db: track.gainDb, pan: track.pan, muted: track.muted, eq_bands: track.eqBands.map((band) => ({ filter_type: band.filterType, frequency_hz: band.frequencyHz, gain_db: band.gainDb, q: band.q, enabled: true })) }));
+  return state.tracks.map((track) => ({ gain_db: track.gainDb, pan: track.pan, muted: track.muted, timeline_start_seconds: track.timelineStart, clip_start_seconds: track.trimStart, clip_end_seconds: track.trimEnd, eq_bands: track.eqBands.map((band) => ({ filter_type: band.filterType, frequency_hz: band.frequencyHz, gain_db: band.gainDb, q: band.q, enabled: true })) }));
 }
 
 async function bounce() {
@@ -372,10 +578,57 @@ async function bounce() {
 
 els['add-stems'].addEventListener('click', () => els['stem-input'].click());
 els['stem-input'].addEventListener('change', (event) => addFiles(event.target.files));
+els['open-pro-master'].addEventListener('click', () => {
+  if (state.tracks.length) window.clearwaveProMasterSession = exportSessionForPro();
+  const proWindow = window.open('/daw?workspace=pro', 'clearwave-pro-master');
+  if (!proWindow) return status('Your browser blocked the PRO Master window. Allow pop-ups for Clearwave and try again.', 'error');
+  proWindow.focus();
+});
+els['arrangement-zoom-out'].addEventListener('click', () => { state.pixelsPerSecond = Math.max(1, state.pixelsPerSecond - 4); renderArrangement(); });
+els['arrangement-zoom-in'].addEventListener('click', () => { state.pixelsPerSecond = Math.min(60, state.pixelsPerSecond + 4); renderArrangement(); });
+els['arrangement-fit'].addEventListener('click', fitArrangementToView);
+els['arrangement-loop'].addEventListener('click', () => { if (!state.tracks.length) return; state.loop.enabled = !state.loop.enabled; state.loop.start = 0; state.loop.end = Math.max(.5, Math.min(sessionDuration(), state.loop.end || sessionDuration())); renderArrangement(); });
+els['arrangement-add-marker'].addEventListener('click', addMarker);
+els['arrangement-sync-mixer'].addEventListener('click', () => {
+  if (!isProWorkspace || !window.opener?.applyClearwaveProMasterSession) return status('This PRO Master workspace was opened on its own, so there is no mixer window to sync.', 'error');
+  const synced = window.opener.applyClearwaveProMasterSession(exportSessionForPro());
+  status(synced ? 'Current PRO Master settings were synced back to the mixer.' : 'The mixer could not accept this PRO Master session.', synced ? 'success' : 'error');
+});
+els['arrangement-markers'].addEventListener('click', (event) => { const button = event.target.closest('[data-remove-marker]'); if (!button) return; state.markers.splice(Number(button.dataset.removeMarker), 1); renderArrangement(); });
+els['arrangement-tracks'].addEventListener('pointerdown', beginArrangementEdit);
+els['arrangement-tracks'].addEventListener('input', (event) => {
+  const index = Number(event.target.dataset.arrangementTrack);
+  const control = event.target.dataset.arrangementControl;
+  const track = state.tracks[index];
+  if (!track || !control) return;
+  const value = Number(event.target.value);
+  if (!Number.isFinite(value)) return;
+  if (control === 'gain') track.gainDb = value;
+  if (control === 'pan') track.pan = value;
+  applyTrack(track);
+  const output = event.target.closest('.arrangement-track-slider')?.querySelector('output');
+  if (output) output.textContent = control === 'gain' ? `${value > 0 ? '+' : ''}${value.toFixed(1)}` : (value === 0 ? 'C' : `${value < 0 ? 'L' : 'R'}${Math.abs(value)}`);
+});
+els['arrangement-tracks'].addEventListener('click', (event) => {
+  const button = event.target.closest('[data-arrangement-action]');
+  if (!button) return;
+  const index = Number(button.dataset.arrangementTrack);
+  const track = state.tracks[index];
+  if (!track) return;
+  if (button.dataset.arrangementAction === 'analyze') return openAnalysis(index);
+  if (button.dataset.arrangementAction === 'eq') return openEq(index);
+  if (button.dataset.arrangementAction === 'mute') track.muted = !track.muted;
+  if (button.dataset.arrangementAction === 'solo') state.soloKey = state.soloKey === track.key ? null : track.key;
+  applyAllTracks();
+  renderArrangement();
+});
+window.addEventListener('pointermove', moveArrangementEdit);
+window.addEventListener('pointerup', finishArrangementEdit);
+window.addEventListener('pointercancel', finishArrangementEdit);
 els['play-preview'].addEventListener('click', () => play().catch((error) => status(error.message || 'Playback could not start. Click Preview again.', 'error')));
 els['pause-preview'].addEventListener('click', pause);
 els['stop-preview'].addEventListener('click', stop);
-els['playback-progress'].addEventListener('input', (event) => { const wasPlaying = state.playing; state.playOffset = maxDuration() * Number(event.target.value) / 100; if (wasPlaying) { clearSources(); state.playing = false; play(); } else updateProgress(); });
+els['playback-progress'].addEventListener('input', (event) => { const wasPlaying = state.playing; state.playOffset = sessionDuration() * Number(event.target.value) / 100; if (wasPlaying) { clearSources(); state.playing = false; play(); } else updateProgress(); });
 els['bounce-button'].addEventListener('click', bounce);
 els['analyze-all'].addEventListener('click', () => openAnalysisAll().catch((error) => { state.analyzingAll = false; render(); status(error.message || 'The stems could not be analyzed.', 'error'); }));
 els['apply-auto-eq'].addEventListener('click', applyAutoEq);
@@ -413,3 +666,9 @@ els['daw-track-list'].addEventListener('click', (event) => {
   applyAllTracks();
   render();
 });
+
+if (isProWorkspace) {
+  arrangeProWorkspace();
+  renderArrangement();
+  importSessionFromMixer();
+}

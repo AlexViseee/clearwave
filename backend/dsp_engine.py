@@ -236,13 +236,24 @@ def mix_stem_files(
     sample_rate = sample_rates.pop()
     # A DAW mix bus is always stereo: this lets mono stems use meaningful pan.
     output_channels = 2
-    max_frames = max(audio.shape[1] for audio, _ in decoded)
-    mix = np.zeros((output_channels, max_frames), dtype=np.float32)
     settings_list = track_settings or [{} for _ in decoded]
     if len(settings_list) != len(decoded):
         raise AudioProcessingError("Every stem needs one set of mix controls.")
-    active_stems = 0
+    arranged_stems: list[tuple[np.ndarray, dict[str, Any], int]] = []
     for (audio, _), settings in zip(decoded, settings_list):
+        clip_start = int(round(float(settings.get("clip_start_seconds", 0.0)) * sample_rate))
+        raw_end = settings.get("clip_end_seconds")
+        clip_end = audio.shape[1] if raw_end is None else int(round(float(raw_end) * sample_rate))
+        clip_start = int(np.clip(clip_start, 0, audio.shape[1]))
+        clip_end = int(np.clip(clip_end, clip_start, audio.shape[1]))
+        if clip_end <= clip_start:
+            raise AudioProcessingError("A PRO Master clip trim removes an entire stem.")
+        timeline_start = int(round(float(settings.get("timeline_start_seconds", 0.0)) * sample_rate))
+        arranged_stems.append((audio[:, clip_start:clip_end], settings, max(0, timeline_start)))
+    max_frames = max(offset + audio.shape[1] for audio, _, offset in arranged_stems)
+    mix = np.zeros((output_channels, max_frames), dtype=np.float32)
+    active_stems = 0
+    for audio, settings, timeline_start in arranged_stems:
         if bool(settings.get("muted", False)):
             continue
         active_stems += 1
@@ -286,7 +297,7 @@ def mix_stem_files(
                 processed[1] *= 1.0 + pan
             elif pan > 0:
                 processed[0] *= 1.0 - pan
-        mix[:, : processed.shape[1]] += processed
+        mix[:, timeline_start : timeline_start + processed.shape[1]] += processed
 
     if active_stems == 0:
         raise AudioProcessingError("At least one stem must be audible in the mix.")

@@ -24,6 +24,20 @@ Open `/daw` to load a session of two to 32 aligned mono or stereo WAV stems, wit
 - Optional per-stem pre-mastering with a chosen genre profile, or `None — mix only` to skip it.
 - Bounce the complete session to one 24-bit WAV premaster, then open it automatically in the mastering workspace.
 
+### PRO Master arrangement view
+
+Open `PRO Master` from the home screen or DAW Lite when a session needs more than a static aligned-stem mix. It can start with a fresh stem upload, or it can bring over the currently loaded DAW Lite stem files, gain, pan, mute, EQ, pre-master profile and existing arrangement settings.
+
+- A horizontal time ruler displays the real duration of every stem clip.
+- Drag a clip to delay or place it in the session; drag its left or right edge to trim it.
+- Every clip includes a lightweight waveform preview generated from its WAV audio.
+- Use `Fit session` to fit the complete song in the timeline without horizontal scrolling, or use manual zoom controls for detailed editing.
+- Gain, pan, Solo, Mute, Analyze and EQ are available beside each stem directly in the arrangement header; no duplicate mixer track list is shown in PRO Master.
+- Add removable markers, loop the beginning of a session, run `Analyze all`, and use the shared preview transport directly above the timeline.
+- Session setup, stem upload, optional per-stem pre-mastering, render status and the premaster action are placed above the arrangement.
+- Playback, seeking and the 24-bit premaster bounce use the same clip placement, trim and channel settings, so an arrangement is not merely visual.
+- `Sync to mixer` can return the current PRO Master settings to the DAW Lite window that opened it.
+
 ### Six-band per-stem EQ
 
 Each stem has its own `EQ` window with six independently editable bands. For every band you can set:

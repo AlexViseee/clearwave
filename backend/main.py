@@ -74,6 +74,9 @@ class StemTrackSettings(BaseModel):
     gain_db: float = Field(0.0, ge=-24.0, le=12.0)
     pan: float = Field(0.0, ge=-100.0, le=100.0)
     muted: bool = False
+    timeline_start_seconds: float = Field(0.0, ge=0.0, le=36000.0)
+    clip_start_seconds: float = Field(0.0, ge=0.0, le=36000.0)
+    clip_end_seconds: float | None = Field(None, ge=0.0, le=36000.0)
     eq_frequency_hz: float = Field(1_000.0, ge=20.0, le=20_000.0)
     eq_gain_db: float = Field(0.0, ge=-18.0, le=18.0)
     eq_q: float = Field(0.7, ge=0.1, le=20.0)
