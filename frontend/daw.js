@@ -1,8 +1,8 @@
 const MAX_UPLOAD_BYTES = 1 * 1024 * 1024 * 1024;
-const state = { tracks: [], context: null, master: null, playing: false, soloKey: null, pendingAnalysis: null, analyzingAll: false, eqEditingIndex: null, eqBandIndex: 0 };
+const state = { tracks: [], context: null, master: null, playing: false, soloKey: null, pendingAnalysis: null, analyzingAll: false, eqEditingIndex: null, eqBandIndex: 0, playOffset: 0, startedAt: 0, progressFrame: 0 };
 const els = Object.fromEntries([
   'stem-input', 'add-stems', 'session-summary', 'daw-genre', 'daw-premaster',
-  'play-preview', 'stop-preview', 'playback-status', 'empty-desk', 'daw-track-list',
+  'play-preview', 'pause-preview', 'stop-preview', 'playback-status', 'playback-progress', 'playback-time', 'empty-desk', 'daw-track-list',
   'daw-status', 'bounce-button', 'analyze-all', 'analysis-dialog',
   'analysis-track-name', 'analysis-results', 'analysis-suggestion-title', 'analysis-suggestion', 'apply-auto-eq', 'cancel-analysis', 'eq-dialog', 'eq-track-name', 'eq-band-tabs', 'eq-filter-type', 'eq-frequency', 'eq-gain', 'eq-q', 'eq-close', 'eq-curve-line',
 ].map((id) => [id, document.getElementById(id)]));
@@ -41,6 +41,10 @@ function updatePlaybackLabel() {
   if (state.playing) els['playback-status'].textContent = soloTrack ? `Solo: ${soloTrack.file.name}` : 'Live mix preview active';
   else els['playback-status'].textContent = soloTrack ? `Solo armed: ${soloTrack.file.name}` : 'Preview stopped';
 }
+
+function maxDuration() { return Math.max(0, ...state.tracks.map((track) => track.buffer.duration)); }
+function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`; }
+function updateProgress() { const duration = maxDuration(); const position = state.playing ? Math.min(duration, state.playOffset + (context().currentTime - state.startedAt)) : state.playOffset; els['playback-progress'].value = duration ? (position / duration) * 100 : 0; els['playback-time'].textContent = `${formatTime(position)} / ${formatTime(duration)}`; if (state.playing && position < duration) state.progressFrame = requestAnimationFrame(updateProgress); else if (state.playing) stop(); }
 
 function applyTrack(track) {
   if (!track.gainNode) return;
@@ -277,7 +281,8 @@ function updateEqBand() {
   renderEqEditor();
 }
 
-function stop() {
+function clearSources() {
+  cancelAnimationFrame(state.progressFrame);
   state.tracks.forEach((track) => {
     if (track.source) {
       try { track.source.stop(); } catch {}
@@ -288,14 +293,28 @@ function stop() {
       track.eqNodes = [];
     }
   });
+}
+function stop() {
+  clearSources(); state.playOffset = 0;
   state.playing = false;
+  els['pause-preview'].disabled = true;
   els['stop-preview'].disabled = true;
+  els['play-preview'].textContent = '▶ Preview mix';
   updatePlaybackLabel();
+  updateProgress();
+}
+
+function pause() {
+  if (!state.playing) return;
+  state.playOffset = Math.min(maxDuration(), state.playOffset + (context().currentTime - state.startedAt));
+  clearSources(); state.playing = false;
+  els['pause-preview'].disabled = true; els['stop-preview'].disabled = false;
+  els['play-preview'].textContent = '▶ Resume'; updatePlaybackLabel(); updateProgress();
 }
 
 async function play() {
   if (!state.tracks.length) return;
-  stop();
+  clearSources();
   const audio = context();
   await audio.resume();
   const start = audio.currentTime + 0.04;
@@ -313,11 +332,15 @@ async function play() {
     track.panNode = pan;
     track.eqNodes = eqNodes;
     applyTrack(track);
-    source.start(start);
+    source.start(start, state.playOffset);
   });
   state.playing = true;
+  state.startedAt = start;
+  els['play-preview'].textContent = '▶ Playing';
+  els['pause-preview'].disabled = false;
   els['stop-preview'].disabled = false;
   updatePlaybackLabel();
+  updateProgress();
 }
 
 function bounceSettings() {
@@ -350,7 +373,9 @@ async function bounce() {
 els['add-stems'].addEventListener('click', () => els['stem-input'].click());
 els['stem-input'].addEventListener('change', (event) => addFiles(event.target.files));
 els['play-preview'].addEventListener('click', () => play().catch((error) => status(error.message || 'Playback could not start. Click Preview again.', 'error')));
+els['pause-preview'].addEventListener('click', pause);
 els['stop-preview'].addEventListener('click', stop);
+els['playback-progress'].addEventListener('input', (event) => { const wasPlaying = state.playing; state.playOffset = maxDuration() * Number(event.target.value) / 100; if (wasPlaying) { clearSources(); state.playing = false; play(); } else updateProgress(); });
 els['bounce-button'].addEventListener('click', bounce);
 els['analyze-all'].addEventListener('click', () => openAnalysisAll().catch((error) => { state.analyzingAll = false; render(); status(error.message || 'The stems could not be analyzed.', 'error'); }));
 els['apply-auto-eq'].addEventListener('click', applyAutoEq);
