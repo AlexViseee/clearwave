@@ -23,6 +23,21 @@ python -m uvicorn main:app --reload --app-dir backend --port 8001
 
 Open <http://127.0.0.1:8001> in your browser. If port 8001 is unavailable, replace it with another available port; the frontend automatically uses the same port as the API.
 
+### macOS
+
+Clearwave runs on both Apple Silicon and Intel Macs. Install Python 3.10 or newer, then run:
+
+```bash
+git clone https://github.com/AlexViseee/clearwave.git
+cd clearwave
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r backend/requirements.txt
+python -m uvicorn main:app --reload --app-dir backend --port 8001
+```
+
+Open <http://127.0.0.1:8001>. For large WAV or stem sessions, use a Mac with at least 16 GB RAM; 32 GB or more is recommended for long high-resolution sessions because the current DSP pipeline keeps audio in memory while it analyses and masters it.
+
 ## Project structure
 
 ```text
