@@ -24,6 +24,7 @@ from pedalboard import (
     HighShelfFilter,
     Limiter,
     Pedalboard,
+    PeakFilter,
 )
 from scipy.signal import resample_poly
 
@@ -209,7 +210,11 @@ def analyze_file(path: str | Path, genre: str | None = None) -> dict[str, Any]:
     }
 
 
-def mix_stem_files(stem_paths: list[str | Path], destination_path: str | Path) -> dict[str, Any]:
+def mix_stem_files(
+    stem_paths: list[str | Path],
+    destination_path: str | Path,
+    track_settings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Create one headroom-safe mix from aligned mono/stereo WAV stems.
 
     Stems are assumed to begin at the same musical zero point.  Shorter stems
@@ -227,13 +232,50 @@ def mix_stem_files(stem_paths: list[str | Path], destination_path: str | Path) -
         raise AudioProcessingError("Only mono and stereo stems are supported.")
 
     sample_rate = sample_rates.pop()
-    output_channels = 2 if any(audio.shape[0] == 2 for audio, _ in decoded) else 1
+    # A DAW mix bus is always stereo: this lets mono stems use meaningful pan.
+    output_channels = 2
     max_frames = max(audio.shape[1] for audio, _ in decoded)
     mix = np.zeros((output_channels, max_frames), dtype=np.float32)
-    for audio, _ in decoded:
-        if output_channels == 2 and audio.shape[0] == 1:
-            audio = np.repeat(audio, 2, axis=0)
-        mix[:, : audio.shape[1]] += audio
+    settings_list = track_settings or [{} for _ in decoded]
+    if len(settings_list) != len(decoded):
+        raise AudioProcessingError("Every stem needs one set of mix controls.")
+    active_stems = 0
+    for (audio, _), settings in zip(decoded, settings_list):
+        if bool(settings.get("muted", False)):
+            continue
+        active_stems += 1
+        was_mono = audio.shape[0] == 1
+        processed = np.array(audio, dtype=np.float32, copy=True)
+        eq_gain_db = float(settings.get("eq_gain_db", 0.0))
+        if abs(eq_gain_db) > 1e-6:
+            # The DAW's live peaking EQ is rendered here as the same bell
+            # filter, so the bounced premaster matches the audition.
+            eq = Pedalboard([
+                PeakFilter(
+                    cutoff_frequency_hz=float(settings.get("eq_frequency_hz", 1_000.0)),
+                    gain_db=eq_gain_db,
+                    q=float(settings.get("eq_q", 0.7)),
+                )
+            ])
+            processed = eq(processed, sample_rate)
+        if output_channels == 2 and was_mono:
+            processed = np.repeat(processed, 2, axis=0)
+        gain = float(10 ** (float(settings.get("gain_db", 0.0)) / 20.0))
+        processed *= gain
+        if output_channels == 2:
+            # Equal-power pan for mono material; balance control for stereo.
+            pan = float(np.clip(float(settings.get("pan", 0.0)), -100.0, 100.0)) / 100.0
+            if was_mono:
+                processed[0] *= math.cos((pan + 1.0) * math.pi / 4.0)
+                processed[1] *= math.sin((pan + 1.0) * math.pi / 4.0)
+            elif pan < 0:
+                processed[1] *= 1.0 + pan
+            elif pan > 0:
+                processed[0] *= 1.0 - pan
+        mix[:, : processed.shape[1]] += processed
+
+    if active_stems == 0:
+        raise AudioProcessingError("At least one stem must be audible in the mix.")
 
     peak = float(np.max(np.abs(mix)))
     # Reserve 3 dB before the mastering chain, preventing a summed session
@@ -255,6 +297,7 @@ def mix_stem_files(stem_paths: list[str | Path], destination_path: str | Path) -
         "channels": output_channels,
         "duration_seconds": round(max_frames / sample_rate, 3),
         "stem_count": len(stem_paths),
+        "active_stems": active_stems,
         "pre_master_gain_db": round(pre_master_gain_db, 2),
     }
 

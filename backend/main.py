@@ -43,7 +43,7 @@ app.add_middleware(
 async def prevent_stale_frontend_assets(request: Request, call_next):
     """Avoid HTML/JS version mismatches while local hot reload is active."""
     response = await call_next(request)
-    if request.url.path in {"/", "/index.html", "/app.js", "/style.css"}:
+    if request.url.path in {"/", "/daw", "/index.html", "/daw.html", "/app.js", "/daw.js", "/style.css"}:
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -60,6 +60,15 @@ class CustomMasterSettings(BaseModel):
     target_lufs: float = Field(-14.0, ge=-24.0, le=-6.0)
     max_makeup_gain_db: float = Field(12.0, ge=0.0, le=24.0)
     limiter_ceiling_dbtp: float = Field(-1.0, ge=-6.0, le=-0.1)
+
+
+class StemTrackSettings(BaseModel):
+    gain_db: float = Field(0.0, ge=-24.0, le=12.0)
+    pan: float = Field(0.0, ge=-100.0, le=100.0)
+    muted: bool = False
+    eq_frequency_hz: float = Field(1_000.0, ge=20.0, le=20_000.0)
+    eq_gain_db: float = Field(0.0, ge=-18.0, le=18.0)
+    eq_q: float = Field(0.7, ge=0.1, le=20.0)
 
 
 class MasterRequest(BaseModel):
@@ -79,6 +88,11 @@ def _source_path(file_id: str) -> Path:
 @app.get("/api/health")
 def health() -> dict[str, object]:
     return {"status": "ok", "genres": supported_genres()}
+
+
+@app.get("/daw", include_in_schema=False)
+def daw_lite() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "daw.html", media_type="text/html")
 
 
 @app.post("/api/upload", status_code=201)
@@ -132,6 +146,7 @@ async def upload_stems(
     process_stems: Annotated[bool, Form()] = False,
     genre: Annotated[str, Form()] = "edm",
     custom_settings_json: Annotated[str | None, Form()] = None,
+    track_settings_json: Annotated[str | None, Form()] = None,
 ) -> dict[str, object]:
     """Upload a time-aligned stem session and create its local premaster mix."""
     if len(files) < 2:
@@ -142,6 +157,15 @@ async def upload_stems(
         raise HTTPException(status_code=415, detail="Every stem must be a WAV file.")
     normalized_genre = genre.strip().lower()
     custom_settings: dict[str, object] | None = None
+    track_settings: list[dict[str, object]] | None = None
+    if track_settings_json:
+        try:
+            parsed_settings = json.loads(track_settings_json)
+            if not isinstance(parsed_settings, list) or len(parsed_settings) != len(files):
+                raise ValueError
+            track_settings = [StemTrackSettings.model_validate(item).model_dump() for item in parsed_settings]
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stem mixer settings are invalid.") from exc
     if process_stems:
         if normalized_genre not in {*supported_genres(), "custom"}:
             raise HTTPException(status_code=422, detail="Unsupported stem pre-master genre.")
@@ -179,7 +203,7 @@ async def upload_stems(
                 processed_path = processed_dir / f"processed-{index:02d}.wav"
                 master_file(stem_path, processed_path, normalized_genre, custom_settings)
                 mix_paths.append(processed_path)
-        mix_info = mix_stem_files(mix_paths, mixed_destination)
+        mix_info = mix_stem_files(mix_paths, mixed_destination, track_settings)
         analysis = analyze_file(mixed_destination)
     except HTTPException:
         mixed_destination.unlink(missing_ok=True)

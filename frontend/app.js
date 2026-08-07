@@ -1,11 +1,11 @@
 // The UI is served by FastAPI, so keeping API calls on the current origin makes
 // local startup work on any available Uvicorn port (not only 8000).
 const apiBase = window.location.origin;
-const state = { fileId: null, objectUrl: null, sourceUrl: null, waves: {}, masterUrl: null, stemFiles: [] };
+const state = { fileId: null, objectUrl: null, sourceUrl: null, waves: {}, masterUrl: null, stemFiles: [], stemTracks: [] };
 const els = Object.fromEntries([
   'single-file-input', 'stem-file-input', 'file-badge', 'track-info', 'track-name', 'track-meta', 'remove-file',
   'genre', 'analyze-button', 'master-button', 'workspace', 'status', 'metrics', 'feedback',
-  'diagnostics-subtitle', 'master-card', 'download-button', 'quality-gate', 'quality-summary', 'quality-badge', 'quality-checks', 'choose-single', 'choose-stems', 'stem-queue', 'stem-queue-title', 'stem-queue-list', 'stem-premaster', 'stem-profile-label', 'add-stems', 'prepare-stems',
+  'diagnostics-subtitle', 'master-card', 'download-button', 'quality-gate', 'quality-summary', 'quality-badge', 'quality-checks', 'choose-single', 'choose-stems', 'stem-queue', 'stem-queue-title', 'stem-queue-list', 'mix-desk', 'mix-track-list', 'stem-premaster', 'stem-profile-label', 'add-stems', 'prepare-stems',
 ].map((id) => [id, document.getElementById(id)]));
 
 const formatBytes = (bytes) => bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -113,13 +113,30 @@ function updateStemProfileLabel() {
   els['stem-profile-label'].textContent = `Uses the selected ${selected} profile on every stem.`;
 }
 
+const stemKey = (file) => `${file.name}:${file.size}:${file.lastModified}`;
+
+function syncStemTracks() {
+  state.stemTracks = state.stemFiles.map((file) => state.stemTracks.find((track) => track.key === stemKey(file)) || ({ key: stemKey(file), file, gainDb: 0, pan: 0, muted: false }));
+}
+
+function renderMixDesk() {
+  els['mix-desk'].classList.toggle('hidden', state.stemTracks.length === 0);
+  if (!state.stemTracks.length) return;
+  els['mix-track-list'].innerHTML = state.stemTracks.map((track, index) => `<div class="mix-track ${track.muted ? 'muted' : ''}"><span class="mix-track-number">${String(index + 1).padStart(2, '0')}</span><span class="mix-track-name" title="${escapeHtml(track.file.name)}">${escapeHtml(track.file.name)}</span><label class="mix-control"><span class="mix-control-top"><span>Gain</span><output class="mix-control-value">${track.gainDb > 0 ? '+' : ''}${track.gainDb.toFixed(1)} dB</output></span><input type="range" min="-24" max="12" step="0.5" value="${track.gainDb}" data-track="${index}" data-control="gain" /></label><label class="mix-control"><span class="mix-control-top"><span>Pan</span><output class="mix-control-value">${track.pan === 0 ? 'C' : `${track.pan < 0 ? 'L' : 'R'}${Math.abs(track.pan)}`}</output></span><input type="range" min="-100" max="100" step="1" value="${track.pan}" data-track="${index}" data-control="pan" /></label><button type="button" class="mix-mute ${track.muted ? 'active' : ''}" data-track="${index}" data-control="mute" aria-label="Mute ${escapeHtml(track.file.name)}">M</button></div>`).join('');
+}
+
+function stemMixSettings() {
+  return state.stemTracks.map((track) => ({ gain_db: track.gainDb, pan: track.pan, muted: track.muted }));
+}
+
 function renderStemQueue() {
   els['stem-queue'].classList.toggle('hidden', state.stemFiles.length === 0);
-  if (state.stemFiles.length === 0) return;
+  if (state.stemFiles.length === 0) { renderMixDesk(); return; }
   const totalBytes = state.stemFiles.reduce((total, file) => total + file.size, 0);
   els['stem-queue-title'].textContent = `${state.stemFiles.length} stem${state.stemFiles.length === 1 ? '' : 's'} queued · ${formatBytes(totalBytes)}`;
   els['prepare-stems'].disabled = state.stemFiles.length < 2;
   els['stem-queue-list'].innerHTML = state.stemFiles.map((file, index) => { const name = escapeHtml(file.name); return `<div class="queued-stem"><span class="queued-stem-name" title="${name}">${name}</span><span>${formatBytes(file.size)}</span><button class="queued-stem-remove" type="button" data-stem-index="${index}" aria-label="Remove ${name}">×</button></div>`; }).join('');
+  renderMixDesk();
 }
 
 function addStemFiles(selectedFiles) {
@@ -130,12 +147,12 @@ function addStemFiles(selectedFiles) {
   const total = [...state.stemFiles, ...additions];
   if (total.length > 32) { showStatus('A stem session supports up to 32 WAV files.', 'error'); return; }
   if (total.reduce((sum, file) => sum + file.size, 0) > MAX_UPLOAD_BYTES) { showStatus('The combined stem upload is larger than the 1 GB limit.', 'error'); return; }
-  state.stemFiles = total; els['stem-file-input'].value = ''; renderStemQueue();
+  state.stemFiles = total; syncStemTracks(); els['stem-file-input'].value = ''; renderStemQueue();
 }
 
 async function uploadFiles(selectedFiles, stems = false) {
   const files = Array.from(selectedFiles || []);
-  if (!stems && state.stemFiles.length) { state.stemFiles = []; renderStemQueue(); }
+  if (!stems && state.stemFiles.length) { state.stemFiles = []; state.stemTracks = []; renderStemQueue(); }
   if (!files.length || (!stems && files.length !== 1)) { showStatus('Please choose one valid .wav audio file.', 'error'); return; }
   if (stems && files.length < 2) { showStatus('A stem session needs at least two WAV files.', 'error'); return; }
   if (files.some((file) => !file.name.toLowerCase().endsWith('.wav'))) { showStatus('Every selected file must be a .wav audio file.', 'error'); return; }
@@ -144,6 +161,7 @@ async function uploadFiles(selectedFiles, stems = false) {
   resetSession(false); showStatus(stems ? 'Uploading stems and building a safe premaster mix…' : 'Uploading and validating your WAV…'); els.workspace.classList.remove('hidden');
   const form = new FormData();
   files.forEach((file) => form.append(stems ? 'files' : 'file', file));
+  if (stems) form.append('track_settings_json', JSON.stringify(stemMixSettings()));
   if (stems && els['stem-premaster'].checked) {
     form.append('process_stems', 'true');
     form.append('genre', els.genre.value);
@@ -151,7 +169,7 @@ async function uploadFiles(selectedFiles, stems = false) {
   }
   try {
     const result = await api(stems ? '/api/upload-stems' : '/api/upload', { method: 'POST', body: form });
-    if (stems) { state.stemFiles = []; renderStemQueue(); }
+    if (stems) { state.stemFiles = []; state.stemTracks = []; renderStemQueue(); }
     state.fileId = result.file_id; state.objectUrl = stems ? null : URL.createObjectURL(files[0]); state.sourceUrl = stems ? endpoint(`/api/stream/source/${result.file_id}`) : state.objectUrl;
     els['track-name'].textContent = stems ? `${files.length} stems — premaster mix` : result.filename;
     els['track-meta'].textContent = `${formatBytes(totalBytes)} · ${result.audio.sample_rate.toLocaleString()} Hz · ${result.audio.channels} ch`;
@@ -183,6 +201,29 @@ async function master() {
   await withBusy(els['master-button'], async () => { showStatus('Building your genre-tuned master and running the release quality gate…'); const payload = { genre: els.genre.value }; if (payload.genre === 'custom') payload.custom_settings = customSettings(); const result = await api(`/api/master/${state.fileId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); renderAnalysis(result.after, `Mastered ${result.genre.toUpperCase()}`); renderQualityGate(result.quality_gate); state.masterUrl = endpoint(result.stream_url); void makeWave('mastered', state.masterUrl, '#waveform-mastered', '#7c8ae6'); els['download-button'].href = endpoint(result.download_url); els['master-card'].classList.remove('hidden'); showStatus(`Master complete and approved by the release quality gate.`, 'success'); }, 'Mastering');
 }
 
+async function loadDawPremaster(fileId) {
+  resetSession(false);
+  els.workspace.classList.remove('hidden');
+  showStatus('Loading the premaster from DAW Lite…');
+  try {
+    const analysis = await api(`/api/analyze/${encodeURIComponent(fileId)}`);
+    state.fileId = fileId;
+    state.sourceUrl = endpoint(`/api/stream/source/${fileId}`);
+    els['track-name'].textContent = 'DAW Lite premaster mix';
+    els['track-meta'].textContent = `${analysis.duration_seconds}s · ${analysis.sample_rate.toLocaleString()} Hz · ${analysis.channels} ch`;
+    els['track-info'].classList.remove('hidden');
+    els['file-badge'].textContent = 'DAW mix';
+    els['file-badge'].classList.remove('hidden');
+    els['analyze-button'].disabled = false;
+    els['master-button'].disabled = false;
+    renderAnalysis(analysis, 'DAW Lite premaster');
+    void makeWave('original', state.sourceUrl, '#waveform-original', '#61708d');
+    showStatus('DAW premaster ready. Choose a profile and create the final master.', 'success');
+  } catch (error) {
+    showStatus(error.message || 'The DAW premaster could not be loaded.', 'error');
+  }
+}
+
 els['single-file-input'].addEventListener('change', (event) => uploadFiles(event.target.files));
 els['stem-file-input'].addEventListener('change', (event) => addStemFiles(event.target.files));
 els['choose-single'].addEventListener('click', () => els['single-file-input'].click());
@@ -191,9 +232,13 @@ els.genre.addEventListener('change', () => { document.getElementById('custom-con
 sliderIds.forEach((id) => document.getElementById(id).addEventListener('input', (event) => updateSliderLabel(event.target)));
 els['prepare-stems'].addEventListener('click', () => uploadFiles(state.stemFiles, true));
 els['add-stems'].addEventListener('click', () => els['stem-file-input'].click());
-els['stem-queue-list'].addEventListener('click', (event) => { const button = event.target.closest('[data-stem-index]'); if (!button) return; state.stemFiles.splice(Number(button.dataset.stemIndex), 1); renderStemQueue(); });
+els['stem-queue-list'].addEventListener('click', (event) => { const button = event.target.closest('[data-stem-index]'); if (!button) return; const index = Number(button.dataset.stemIndex); state.stemFiles.splice(index, 1); state.stemTracks.splice(index, 1); renderStemQueue(); });
+els['mix-track-list'].addEventListener('input', (event) => { const control = event.target.dataset.control; if (!control) return; const track = state.stemTracks[Number(event.target.dataset.track)]; if (!track) return; const value = Number(event.target.value); if (control === 'gain') track.gainDb = value; if (control === 'pan') track.pan = value; const output = event.target.closest('.mix-control')?.querySelector('output'); if (output) output.textContent = control === 'gain' ? `${value > 0 ? '+' : ''}${value.toFixed(1)} dB` : (value === 0 ? 'C' : `${value < 0 ? 'L' : 'R'}${Math.abs(value)}`); });
+els['mix-track-list'].addEventListener('click', (event) => { const button = event.target.closest('[data-control="mute"]'); if (!button) return; const track = state.stemTracks[Number(button.dataset.track)]; if (!track) return; track.muted = !track.muted; renderMixDesk(); });
 els['remove-file'].addEventListener('click', () => { resetSession(); els.workspace.classList.add('hidden'); });
 els['analyze-button'].addEventListener('click', () => analyze().catch((error) => showStatus(error.message, 'error')));
 els['master-button'].addEventListener('click', () => master().catch((error) => showStatus(error.message, 'error')));
 document.querySelectorAll('.play-button').forEach((button) => button.addEventListener('click', () => { const name = button.dataset.wave; const wave = state.waves[name]; if (!wave) return; wave.playPause(); window.setTimeout(() => updatePlayButton(name, wave.isPlaying()), 0); }));
 updateStemProfileLabel();
+const dawFileId = new URLSearchParams(window.location.search).get('file_id');
+if (dawFileId) void loadDawPremaster(dawFileId);
