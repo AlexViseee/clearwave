@@ -44,12 +44,24 @@ class GenreProfile:
 
 
 GENRE_PROFILES: dict[str, GenreProfile] = {
+    # Electronic
     "edm": GenreProfile(-9.0, -20.0, 4.0, 5.0, 80.0, 14.0, "A dense, controlled master suits EDM."),
+    "house": GenreProfile(-9.0, -19.0, 3.0, 8.0, 95.0, 13.0, "A firm, rhythmic master supports a four-on-the-floor groove."),
+    "techno": GenreProfile(-9.0, -19.0, 4.0, 4.0, 75.0, 14.0, "Fast control keeps the low-end pulse focused for techno."),
+    "drum-and-bass": GenreProfile(-8.5, -18.0, 4.0, 3.0, 70.0, 15.0, "A tight, high-energy profile suits fast drum and bass."),
+    # Urban / pop
     "hip-hop": GenreProfile(-10.0, -18.0, 3.0, 12.0, 110.0, 12.0, "Keep the low end focused and vocals forward."),
+    "trap": GenreProfile(-9.0, -17.0, 4.0, 6.0, 100.0, 13.0, "Fast compression adds consistency while keeping 808s powerful."),
+    "rnb": GenreProfile(-11.0, -22.0, 2.0, 18.0, 150.0, 10.0, "Smooth, gentle control keeps the vocal and groove intimate."),
     "rock": GenreProfile(-10.0, -18.0, 2.5, 18.0, 130.0, 12.0, "Moderate bus compression preserves guitar impact."),
+    "metal": GenreProfile(-9.0, -17.0, 4.0, 8.0, 95.0, 13.0, "Firm control helps dense guitars and drums remain defined."),
     "pop": GenreProfile(-10.0, -19.0, 3.0, 10.0, 100.0, 12.0, "A polished, even dynamic profile suits pop."),
+    "indie": GenreProfile(-11.0, -21.0, 2.0, 20.0, 160.0, 10.0, "Moderate dynamics retain the character of an indie mix."),
+    # Organic
     "classical": GenreProfile(-16.0, None, None, None, None, 6.0, "Dynamics are preserved for classical material."),
     "acoustic": GenreProfile(-14.0, -24.0, 1.5, 30.0, 180.0, 7.0, "Gentle compression retains the natural performance."),
+    "jazz": GenreProfile(-14.0, -25.0, 1.5, 35.0, 240.0, 7.0, "Slow, gentle compression preserves the feel of a jazz ensemble."),
+    "country": GenreProfile(-12.0, -22.0, 2.0, 22.0, 170.0, 9.0, "Natural transients and vocal clarity suit country recordings."),
 }
 
 
@@ -194,6 +206,56 @@ def analyze_file(path: str | Path, genre: str | None = None) -> dict[str, Any]:
         "duration_seconds": round(audio.shape[1] / sample_rate, 3),
         "metrics": metrics,
         "feedback": _feedback(metrics, genre.lower() if genre else None),
+    }
+
+
+def mix_stem_files(stem_paths: list[str | Path], destination_path: str | Path) -> dict[str, Any]:
+    """Create one headroom-safe mix from aligned mono/stereo WAV stems.
+
+    Stems are assumed to begin at the same musical zero point.  Shorter stems
+    are padded with silence; mono stems are duplicated into a stereo session.
+    All stems must share a sample rate so no hidden resampling changes a mix.
+    """
+    if len(stem_paths) < 2:
+        raise AudioProcessingError("A stem session needs at least two WAV files.")
+
+    decoded = [_read_audio(path) for path in stem_paths]
+    sample_rates = {sample_rate for _, sample_rate in decoded}
+    if len(sample_rates) != 1:
+        raise AudioProcessingError("All stems must use the same sample rate before they can be mixed.")
+    if any(audio.shape[0] > 2 for audio, _ in decoded):
+        raise AudioProcessingError("Only mono and stereo stems are supported.")
+
+    sample_rate = sample_rates.pop()
+    output_channels = 2 if any(audio.shape[0] == 2 for audio, _ in decoded) else 1
+    max_frames = max(audio.shape[1] for audio, _ in decoded)
+    mix = np.zeros((output_channels, max_frames), dtype=np.float32)
+    for audio, _ in decoded:
+        if output_channels == 2 and audio.shape[0] == 1:
+            audio = np.repeat(audio, 2, axis=0)
+        mix[:, : audio.shape[1]] += audio
+
+    peak = float(np.max(np.abs(mix)))
+    # Reserve 3 dB before the mastering chain, preventing a summed session
+    # from clipping before its compressor and limiter are reached.
+    pre_master_gain_db = 0.0
+    if peak > 0:
+        desired_peak = 10 ** (-3.0 / 20.0)
+        if peak > desired_peak:
+            gain = desired_peak / peak
+            mix *= gain
+            pre_master_gain_db = 20.0 * math.log10(gain)
+
+    try:
+        sf.write(str(destination_path), mix.T, sample_rate, subtype="PCM_24")
+    except (RuntimeError, OSError, ValueError) as exc:
+        raise AudioProcessingError("The stem session could not be written as a WAV mix.") from exc
+    return {
+        "sample_rate": sample_rate,
+        "channels": output_channels,
+        "duration_seconds": round(max_frames / sample_rate, 3),
+        "stem_count": len(stem_paths),
+        "pre_master_gain_db": round(pre_master_gain_db, 2),
     }
 
 

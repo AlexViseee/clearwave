@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+import shutil
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from dsp_engine import AudioProcessingError, analyze_file, master_file, supported_genres
+from dsp_engine import AudioProcessingError, analyze_file, master_file, mix_stem_files, supported_genres
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -20,10 +22,12 @@ FRONTEND_DIR = BASE_DIR.parent / "frontend"
 STORAGE_DIR = BASE_DIR / "storage"
 UPLOADS_DIR = STORAGE_DIR / "uploads"
 MASTERS_DIR = STORAGE_DIR / "masters"
-for directory in (UPLOADS_DIR, MASTERS_DIR):
+STEMS_DIR = STORAGE_DIR / "stems"
+for directory in (UPLOADS_DIR, MASTERS_DIR, STEMS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
-MAX_UPLOAD_BYTES = 250 * 1024 * 1024
+MAX_UPLOAD_BYTES = 1 * 1024 * 1024 * 1024
+MULTIPART_OVERHEAD_BYTES = 2 * 1024 * 1024
 
 app = FastAPI(title="Local Audio Mastering API", version="1.0.0")
 app.add_middleware(
@@ -33,6 +37,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def prevent_stale_frontend_assets(request: Request, call_next):
+    """Avoid HTML/JS version mismatches while local hot reload is active."""
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/app.js", "/style.css"}:
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 class CustomMasterSettings(BaseModel):
@@ -80,8 +93,8 @@ async def upload_wav(request: Request, file: Annotated[UploadFile, File(...)]) -
             declared_size = int(content_length)
         except ValueError:
             declared_size = 0
-        if declared_size > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="The WAV is larger than the 250 MB upload limit.")
+        if declared_size > MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES:
+            raise HTTPException(status_code=413, detail="The WAV is larger than the 1 GB upload limit.")
 
     file_id = str(uuid.uuid4())
     destination = UPLOADS_DIR / f"{file_id}.wav"
@@ -93,7 +106,7 @@ async def upload_wav(request: Request, file: Annotated[UploadFile, File(...)]) -
                 if total_bytes > MAX_UPLOAD_BYTES:
                     output.close()
                     destination.unlink(missing_ok=True)
-                    raise HTTPException(status_code=413, detail="The WAV is larger than the 250 MB upload limit.")
+                    raise HTTPException(status_code=413, detail="The WAV is larger than the 1 GB upload limit.")
                 output.write(chunk)
         # Decode once immediately so an extension cannot masquerade as audio.
         analysis = analyze_file(destination)
@@ -109,6 +122,85 @@ async def upload_wav(request: Request, file: Annotated[UploadFile, File(...)]) -
         "file_id": file_id,
         "filename": Path(filename).name,
         "bytes_received": total_bytes,
+        "audio": {key: analysis[key] for key in ("sample_rate", "channels", "duration_seconds")},
+    }
+
+
+@app.post("/api/upload-stems", status_code=201)
+async def upload_stems(
+    files: Annotated[list[UploadFile], File(...)],
+    process_stems: Annotated[bool, Form()] = False,
+    genre: Annotated[str, Form()] = "edm",
+    custom_settings_json: Annotated[str | None, Form()] = None,
+) -> dict[str, object]:
+    """Upload a time-aligned stem session and create its local premaster mix."""
+    if len(files) < 2:
+        raise HTTPException(status_code=422, detail="Select at least two WAV stems.")
+    if len(files) > 32:
+        raise HTTPException(status_code=422, detail="A stem session supports up to 32 WAV files.")
+    if any(Path(upload.filename or "").suffix.lower() != ".wav" for upload in files):
+        raise HTTPException(status_code=415, detail="Every stem must be a WAV file.")
+    normalized_genre = genre.strip().lower()
+    custom_settings: dict[str, object] | None = None
+    if process_stems:
+        if normalized_genre not in {*supported_genres(), "custom"}:
+            raise HTTPException(status_code=422, detail="Unsupported stem pre-master genre.")
+        if normalized_genre == "custom":
+            if not custom_settings_json:
+                raise HTTPException(status_code=422, detail="Custom stem pre-mastering requires custom settings.")
+            try:
+                custom_settings = CustomMasterSettings.model_validate(json.loads(custom_settings_json)).model_dump()
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Custom stem settings are invalid.") from exc
+
+    file_id = str(uuid.uuid4())
+    stem_dir = STEMS_DIR / file_id
+    mixed_destination = UPLOADS_DIR / f"{file_id}.wav"
+    total_bytes = 0
+    try:
+        stem_dir.mkdir(parents=True, exist_ok=False)
+        stem_paths: list[Path] = []
+        for index, upload in enumerate(files, start=1):
+            stem_path = stem_dir / f"stem-{index:02d}.wav"
+            with stem_path.open("wb") as output:
+                while chunk := await upload.read(1024 * 1024):
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_UPLOAD_BYTES:
+                        raise HTTPException(status_code=413, detail="The combined stem session is larger than the 1 GB upload limit.")
+                    output.write(chunk)
+            stem_paths.append(stem_path)
+
+        mix_paths = stem_paths
+        if process_stems:
+            processed_dir = stem_dir / "processed"
+            processed_dir.mkdir()
+            mix_paths = []
+            for index, stem_path in enumerate(stem_paths, start=1):
+                processed_path = processed_dir / f"processed-{index:02d}.wav"
+                master_file(stem_path, processed_path, normalized_genre, custom_settings)
+                mix_paths.append(processed_path)
+        mix_info = mix_stem_files(mix_paths, mixed_destination)
+        analysis = analyze_file(mixed_destination)
+    except HTTPException:
+        mixed_destination.unlink(missing_ok=True)
+        raise
+    except (AudioProcessingError, OSError) as exc:
+        mixed_destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        for upload in files:
+            await upload.close()
+        # The derived premaster is retained for analysis/playback/mastering;
+        # individual upload fragments are no longer needed after it is made.
+        shutil.rmtree(stem_dir, ignore_errors=True)
+
+    return {
+        "file_id": file_id,
+        "filename": "stem-session-premaster.wav",
+        "bytes_received": total_bytes,
+        "input_type": "stems",
+        "stem_pre_mastering": {"enabled": process_stems, "genre": normalized_genre if process_stems else None},
+        "mix": mix_info,
         "audio": {key: analysis[key] for key in ("sample_rate", "channels", "duration_seconds")},
     }
 

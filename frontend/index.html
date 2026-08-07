@@ -40,25 +40,33 @@
 
       <section class="grid gap-6 lg:grid-cols-[1.1fr_.9fr]">
         <div class="rounded-3xl border border-slate-700/60 bg-panel/80 p-5 shadow-glow backdrop-blur sm:p-7">
-          <div class="mb-5 flex items-center justify-between gap-3">
-            <div><h2 class="text-lg font-bold">Your track</h2><p class="mt-1 text-sm text-slate-400">WAV only · up to 250 MB</p></div>
+          <div class="mb-6 flex items-center justify-between gap-3">
+            <div><p class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[.16em] text-accent">Step 01</p><h2 class="text-xl font-extrabold">Choose your source</h2><p class="mt-1 text-sm text-slate-400">One finished mix, or a session of aligned stems.</p></div>
             <span id="file-badge" class="hidden rounded-full bg-accent/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-accent"></span>
           </div>
-          <label id="drop-zone" class="drop-zone group flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-600 bg-slate-950/35 p-6 text-center transition">
-            <input id="file-input" class="sr-only" type="file" accept=".wav,audio/wav" />
-            <span class="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-slate-800 text-2xl transition group-hover:bg-accent group-hover:text-ink">↥</span>
-            <span class="text-base font-bold text-white">Drop your WAV here</span>
-            <span class="mt-1.5 text-sm text-slate-400">or <span class="text-accent underline underline-offset-4">browse files</span></span>
-          </label>
+          <div class="source-choice-grid">
+            <button id="choose-single" class="source-choice source-choice-single" type="button"><span class="source-choice-header"><span class="source-choice-icon"><i></i><i></i><i></i><i></i></span><span class="source-pill">One file</span></span><span class="source-choice-copy"><span class="source-choice-title">Single WAV</span><span class="source-choice-description">Upload a completed mix and start mastering immediately.</span></span><span class="source-choice-cta">Choose WAV <b>→</b></span></button>
+            <button id="choose-stems" class="source-choice source-choice-stems" type="button"><span class="source-choice-header"><span class="source-choice-icon stem-icon"><i></i><i></i><i></i></span><span class="source-pill">2–32 files</span></span><span class="source-choice-copy"><span class="source-choice-title">Stem session</span><span class="source-choice-description">Combine aligned WAV stems into one clean premaster.</span></span><span class="source-choice-cta">Add stems <b>+</b></span></button>
+          </div>
+          <input id="single-file-input" class="sr-only" type="file" accept=".wav,audio/wav" />
+          <input id="stem-file-input" class="sr-only" type="file" accept=".wav,audio/wav" multiple />
+          <p class="mt-4 text-center text-[11px] text-slate-500">WAV only · up to 1 GB total · audio stays on this computer</p>
+          <div id="stem-queue" class="mt-4 hidden rounded-xl border border-electric/25 bg-slate-950/45 p-3">
+            <div class="flex items-center justify-between gap-3"><div><p class="font-mono text-[10px] uppercase tracking-[.14em] text-electric">Stem tray</p><p id="stem-queue-title" class="mt-1 text-sm font-bold text-white">0 stems queued</p></div><button id="add-stems" class="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-200 transition hover:border-electric hover:text-electric" type="button">Add more</button></div>
+            <p class="mt-2 text-[11px] leading-4 text-slate-400">All stems must start at the same musical position and use the same sample rate.</p>
+            <div id="stem-queue-list" class="stem-queue-list mt-3"></div>
+            <label class="stem-treatment mt-3"><input id="stem-premaster" type="checkbox" class="h-4 w-4 shrink-0 accent-[#aeb9ff]" /><span><span class="block text-xs font-bold text-slate-100">Pre-master each stem before mixing</span><span id="stem-profile-label" class="mt-0.5 block text-[11px] text-slate-400">Uses the selected EDM profile on every stem.</span></span><span class="stem-treatment-badge">Optional</span></label>
+            <button id="prepare-stems" class="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-electric px-4 py-3 text-xs font-extrabold text-ink transition hover:bg-[#aeb9ff] disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled>Create one premaster <span>→</span></button>
+          </div>
           <div id="track-info" class="mt-4 hidden rounded-xl border border-slate-700/60 bg-slate-950/40 px-4 py-3">
             <div class="flex items-center gap-3"><span class="grid h-9 w-9 place-items-center rounded-lg bg-electric/15 text-electric">♪</span><div class="min-w-0"><p id="track-name" class="truncate text-sm font-semibold text-white"></p><p id="track-meta" class="mt-0.5 font-mono text-[11px] text-slate-400"></p></div><button id="remove-file" class="ml-auto rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-white" type="button">Remove</button></div>
           </div>
         </div>
 
         <div class="rounded-3xl border border-slate-700/60 bg-panel/80 p-5 backdrop-blur sm:p-7">
-          <h2 class="text-lg font-bold">Mastering profile</h2><p class="mt-1 text-sm text-slate-400">Choose the intended listening context.</p>
+          <p class="mb-1 font-mono text-[10px] font-medium uppercase tracking-[.16em] text-accent">Step 02</p><h2 class="text-xl font-extrabold">Mastering profile</h2><p class="mt-1 text-sm text-slate-400">Choose the intended listening context.</p>
           <label class="mt-6 block text-xs font-bold uppercase tracking-[.13em] text-slate-400" for="genre">Genre</label>
-          <div class="relative mt-2"><select id="genre" class="w-full appearance-none rounded-xl border border-slate-600 bg-slate-950/70 px-4 py-3.5 text-sm font-semibold text-white outline-none transition focus:border-accent"><option value="edm">EDM — punchy &amp; loud</option><option value="hip-hop">Hip-Hop — weight &amp; clarity</option><option value="rock">Rock — impact &amp; energy</option><option value="pop">Pop — polished &amp; balanced</option><option value="classical">Classical — preserve dynamics</option><option value="acoustic">Acoustic — natural &amp; warm</option><option value="custom">Custom — full control</option></select><span class="pointer-events-none absolute right-4 top-3.5 text-slate-400">⌄</span></div>
+          <div class="relative mt-2"><select id="genre" class="w-full appearance-none rounded-xl border border-slate-600 bg-slate-950/70 px-4 py-3.5 text-sm font-semibold text-white outline-none transition focus:border-accent"><optgroup label="Electronic"><option value="edm">EDM — punchy &amp; loud</option><option value="house">House — rhythmic &amp; warm</option><option value="techno">Techno — tight &amp; driving</option><option value="drum-and-bass">Drum &amp; Bass — fast &amp; powerful</option></optgroup><optgroup label="Urban &amp; Pop"><option value="hip-hop">Hip-Hop — weight &amp; clarity</option><option value="trap">Trap — 808 weight &amp; snap</option><option value="rnb">R&amp;B / Soul — smooth &amp; intimate</option><option value="pop">Pop — polished &amp; balanced</option></optgroup><optgroup label="Guitar &amp; Alternative"><option value="rock">Rock — impact &amp; energy</option><option value="metal">Metal — dense &amp; controlled</option><option value="indie">Indie — character &amp; space</option></optgroup><optgroup label="Organic"><option value="acoustic">Acoustic — natural &amp; warm</option><option value="jazz">Jazz — open &amp; dynamic</option><option value="country">Country — clear &amp; natural</option><option value="classical">Classical — preserve dynamics</option></optgroup><optgroup label="Manual"><option value="custom">Custom — full control</option></optgroup></select><span class="pointer-events-none absolute right-4 top-3.5 text-slate-400">⌄</span></div>
           <div id="custom-controls" class="custom-controls mt-5 hidden rounded-2xl border border-electric/25 bg-slate-950/45 p-4">
             <div class="mb-4 flex items-center justify-between"><div><h3 class="text-sm font-bold text-white">Custom chain</h3><p class="mt-0.5 text-xs text-slate-400">Settings are applied in chain order.</p></div><span class="font-mono text-[10px] uppercase tracking-wider text-electric">Advanced</span></div>
             <div class="control-grid">

@@ -4,9 +4,10 @@ Clearwave is a local web application for analysing and automatically mastering l
 
 ## Features
 
-- WAV upload with validation and a 250 MB limit
+- WAV upload with validation and a 1 GB limit
+- Stem-session upload for two to 32 aligned mono/stereo WAVs, mixed locally into a headroom-safe premaster
 - Loudness, true-peak, loudness-range, and spectral-centroid diagnostics
-- Genre-tuned Pedalboard mastering profiles for EDM, Hip-Hop, Rock, Pop, Classical, and Acoustic
+- Genre-tuned Pedalboard mastering profiles for EDM, House, Techno, Drum & Bass, Hip-Hop, Trap, R&B / Soul, Pop, Rock, Metal, Indie, Acoustic, Jazz, Country, and Classical
 - Custom mastering mode with controls for the high-pass filter, compressor, high shelf, loudness target, makeup-gain limit, and limiter ceiling
 - Before/after waveform playback and mastered WAV download
 
@@ -39,6 +40,7 @@ frontend/
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /api/upload` | Upload and validate a WAV file. |
+| `POST /api/upload-stems` | Upload aligned WAV stems and create one local premaster mix. |
 | `GET /api/analyze/{file_id}` | Return non-destructive audio diagnostics. |
 | `POST /api/master/{file_id}` | Create a genre or custom-settings master. |
 | `GET /api/download/{master_id}` | Download a mastered WAV. |
