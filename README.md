@@ -6,7 +6,7 @@ Clearwave is a local web application for analysing and automatically mastering l
 
 - WAV upload with validation and a 1 GB limit
 - Stem-session upload for two to 32 aligned mono/stereo WAVs, mixed locally into a headroom-safe premaster
-- Separate DAW Lite Mix Desk for stem sessions: live per-track solo, gain, stereo pan, mute and parametric EQ (Hz, gain, resonance/Q), local per-stem analysis with apply-or-cancel auto-EQ suggestions, optional per-stem pre-mastering (or None), and server-side bounce to one WAV
+- Separate DAW Lite Mix Desk for stem sessions: live per-track solo, gain, stereo pan, mute and parametric EQ (Hz, gain, resonance/Q), single-stem or all-stem analysis with apply-or-cancel auto-EQ suggestions, optional per-stem pre-mastering (or None), and server-side bounce to one WAV
 - Loudness, true-peak, loudness-range, and spectral-centroid diagnostics
 - Genre-tuned Pedalboard mastering profiles for EDM, House, Techno, Drum & Bass, Hip-Hop, Trap, R&B / Soul, Pop, Rock, Metal, Indie, Acoustic, Jazz, Country, and Classical
 - Custom mastering mode with controls for the high-pass filter, compressor, high shelf, loudness target, makeup-gain limit, and limiter ceiling

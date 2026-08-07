@@ -22,6 +22,8 @@ from pedalboard import (
     Gain,
     HighpassFilter,
     HighShelfFilter,
+    LowShelfFilter,
+    LowpassFilter,
     Limiter,
     Pedalboard,
     PeakFilter,
@@ -246,18 +248,30 @@ def mix_stem_files(
         active_stems += 1
         was_mono = audio.shape[0] == 1
         processed = np.array(audio, dtype=np.float32, copy=True)
-        eq_gain_db = float(settings.get("eq_gain_db", 0.0))
-        if abs(eq_gain_db) > 1e-6:
+        eq_bands = settings.get("eq_bands") or []
+        if eq_bands:
+            plugins = []
+            for band in eq_bands:
+                if not bool(band.get("enabled", True)):
+                    continue
+                kind = str(band.get("filter_type", "peaking"))
+                frequency = float(band.get("frequency_hz", 1_000.0))
+                gain = float(band.get("gain_db", 0.0))
+                q = float(band.get("q", 0.7))
+                if kind == "highpass": plugins.append(HighpassFilter(cutoff_frequency_hz=frequency))
+                elif kind == "lowpass": plugins.append(LowpassFilter(cutoff_frequency_hz=frequency))
+                elif kind == "lowshelf": plugins.append(LowShelfFilter(cutoff_frequency_hz=frequency, gain_db=gain, q=q))
+                elif kind == "highshelf": plugins.append(HighShelfFilter(cutoff_frequency_hz=frequency, gain_db=gain, q=q))
+                else: plugins.append(PeakFilter(cutoff_frequency_hz=frequency, gain_db=(-abs(gain) if kind == "notch" else gain), q=q))
+            if plugins:
+                processed = Pedalboard(plugins)(processed, sample_rate)
+        else:
+            eq_gain_db = float(settings.get("eq_gain_db", 0.0))
+            if abs(eq_gain_db) > 1e-6:
             # The DAW's live peaking EQ is rendered here as the same bell
             # filter, so the bounced premaster matches the audition.
-            eq = Pedalboard([
-                PeakFilter(
-                    cutoff_frequency_hz=float(settings.get("eq_frequency_hz", 1_000.0)),
-                    gain_db=eq_gain_db,
-                    q=float(settings.get("eq_q", 0.7)),
-                )
-            ])
-            processed = eq(processed, sample_rate)
+                eq = Pedalboard([PeakFilter(cutoff_frequency_hz=float(settings.get("eq_frequency_hz", 1_000.0)), gain_db=eq_gain_db, q=float(settings.get("eq_q", 0.7)))])
+                processed = eq(processed, sample_rate)
         if output_channels == 2 and was_mono:
             processed = np.repeat(processed, 2, axis=0)
         gain = float(10 ** (float(settings.get("gain_db", 0.0)) / 20.0))

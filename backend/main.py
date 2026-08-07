@@ -6,7 +6,7 @@ import json
 import uuid
 import shutil
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +62,14 @@ class CustomMasterSettings(BaseModel):
     limiter_ceiling_dbtp: float = Field(-1.0, ge=-6.0, le=-0.1)
 
 
+class EqBandSettings(BaseModel):
+    filter_type: Literal["highpass", "lowshelf", "peaking", "notch", "highshelf", "lowpass"] = "peaking"
+    frequency_hz: float = Field(1_000.0, ge=20.0, le=20_000.0)
+    gain_db: float = Field(0.0, ge=-18.0, le=18.0)
+    q: float = Field(0.7, ge=0.1, le=20.0)
+    enabled: bool = True
+
+
 class StemTrackSettings(BaseModel):
     gain_db: float = Field(0.0, ge=-24.0, le=12.0)
     pan: float = Field(0.0, ge=-100.0, le=100.0)
@@ -69,6 +77,7 @@ class StemTrackSettings(BaseModel):
     eq_frequency_hz: float = Field(1_000.0, ge=20.0, le=20_000.0)
     eq_gain_db: float = Field(0.0, ge=-18.0, le=18.0)
     eq_q: float = Field(0.7, ge=0.1, le=20.0)
+    eq_bands: list[EqBandSettings] = Field(default_factory=list, max_length=6)
 
 
 class MasterRequest(BaseModel):
