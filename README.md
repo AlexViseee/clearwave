@@ -9,6 +9,7 @@ Clearwave is a local web application for analysing and automatically mastering l
 - Loudness, true-peak, loudness-range, and spectral-centroid diagnostics
 - Genre-tuned Pedalboard mastering profiles for EDM, House, Techno, Drum & Bass, Hip-Hop, Trap, R&B / Soul, Pop, Rock, Metal, Indie, Acoustic, Jazz, Country, and Classical
 - Custom mastering mode with controls for the high-pass filter, compressor, high shelf, loudness target, makeup-gain limit, and limiter ceiling
+- Release Quality Gate on every master: true-peak ceiling, digital-clipping scan, DC-offset check, loudness-target check, and source-clipping advisory
 - Before/after waveform playback and mastered WAV download
 
 ## Run locally

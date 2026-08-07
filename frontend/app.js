@@ -5,7 +5,7 @@ const state = { fileId: null, objectUrl: null, sourceUrl: null, waves: {}, maste
 const els = Object.fromEntries([
   'single-file-input', 'stem-file-input', 'file-badge', 'track-info', 'track-name', 'track-meta', 'remove-file',
   'genre', 'analyze-button', 'master-button', 'workspace', 'status', 'metrics', 'feedback',
-  'diagnostics-subtitle', 'master-card', 'download-button', 'choose-single', 'choose-stems', 'stem-queue', 'stem-queue-title', 'stem-queue-list', 'stem-premaster', 'stem-profile-label', 'add-stems', 'prepare-stems',
+  'diagnostics-subtitle', 'master-card', 'download-button', 'quality-gate', 'quality-summary', 'quality-badge', 'quality-checks', 'choose-single', 'choose-stems', 'stem-queue', 'stem-queue-title', 'stem-queue-list', 'stem-premaster', 'stem-profile-label', 'add-stems', 'prepare-stems',
 ].map((id) => [id, document.getElementById(id)]));
 
 const formatBytes = (bytes) => bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -72,6 +72,15 @@ function renderAnalysis(analysis, title = 'Original track') {
   els['diagnostics-subtitle'].textContent = `${title} · ${analysis.duration_seconds}s · ${analysis.sample_rate.toLocaleString()} Hz`;
   els.metrics.innerHTML = cards.map(([label, value]) => `<div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>`).join('');
   els.feedback.innerHTML = feedback.map((item) => `<div class="feedback-note">${item}</div>`).join('');
+}
+
+function renderQualityGate(gate) {
+  const warnings = gate.checks.filter((check) => check.status === 'warning').length;
+  els['quality-gate'].classList.remove('hidden');
+  els['quality-summary'].textContent = warnings ? `Approved with ${warnings} advisory note${warnings === 1 ? '' : 's'}.` : 'Approved for release — technical checks passed.';
+  els['quality-badge'].textContent = warnings ? 'Approved · review notes' : 'Approved';
+  els['quality-badge'].className = `quality-badge ${warnings ? 'warning' : 'passed'}`;
+  els['quality-checks'].innerHTML = gate.checks.map((check) => `<div class="quality-check ${check.status}"><span class="quality-dot"></span><div><div class="quality-check-label">${escapeHtml(check.label)} · ${escapeHtml(String(check.value))} ${escapeHtml(check.unit)}</div><div class="quality-check-detail">${escapeHtml(check.message)}</div></div></div>`).join('');
 }
 
 function updateSliderLabel(input) {
@@ -157,7 +166,7 @@ async function uploadFiles(selectedFiles, stems = false) {
 
 function resetSession(clearInput = true) {
   destroyWave('original'); destroyWave('mastered'); if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
-  state.fileId = null; state.objectUrl = null; state.sourceUrl = null; state.masterUrl = null; els['track-info'].classList.add('hidden'); els['file-badge'].classList.add('hidden'); els['analyze-button'].disabled = true; els['master-button'].disabled = true; els['master-card'].classList.add('hidden'); els.metrics.innerHTML = ''; els.feedback.innerHTML = ''; els['diagnostics-subtitle'].textContent = 'Run an analysis to begin.'; if (clearInput) { els['single-file-input'].value = ''; els['stem-file-input'].value = ''; }
+  state.fileId = null; state.objectUrl = null; state.sourceUrl = null; state.masterUrl = null; els['track-info'].classList.add('hidden'); els['file-badge'].classList.add('hidden'); els['analyze-button'].disabled = true; els['master-button'].disabled = true; els['master-card'].classList.add('hidden'); els['quality-gate'].classList.add('hidden'); els.metrics.innerHTML = ''; els.feedback.innerHTML = ''; els['diagnostics-subtitle'].textContent = 'Run an analysis to begin.'; if (clearInput) { els['single-file-input'].value = ''; els['stem-file-input'].value = ''; }
 }
 
 async function withBusy(button, task, pendingLabel) {
@@ -171,7 +180,7 @@ async function analyze() {
 }
 async function master() {
   if (!state.fileId) return;
-  await withBusy(els['master-button'], async () => { showStatus('Building your genre-tuned master. This can take a moment for long tracks…'); const payload = { genre: els.genre.value }; if (payload.genre === 'custom') payload.custom_settings = customSettings(); const result = await api(`/api/master/${state.fileId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); renderAnalysis(result.after, `Mastered ${result.genre.toUpperCase()}`); state.masterUrl = endpoint(result.stream_url); void makeWave('mastered', state.masterUrl, '#waveform-mastered', '#7c8ae6'); els['download-button'].href = endpoint(result.download_url); els['master-card'].classList.remove('hidden'); showStatus(`Master complete — targeted to ${result.target_lufs} LUFS.`, 'success'); }, 'Mastering');
+  await withBusy(els['master-button'], async () => { showStatus('Building your genre-tuned master and running the release quality gate…'); const payload = { genre: els.genre.value }; if (payload.genre === 'custom') payload.custom_settings = customSettings(); const result = await api(`/api/master/${state.fileId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); renderAnalysis(result.after, `Mastered ${result.genre.toUpperCase()}`); renderQualityGate(result.quality_gate); state.masterUrl = endpoint(result.stream_url); void makeWave('mastered', state.masterUrl, '#waveform-mastered', '#7c8ae6'); els['download-button'].href = endpoint(result.download_url); els['master-card'].classList.remove('hidden'); showStatus(`Master complete and approved by the release quality gate.`, 'success'); }, 'Mastering');
 }
 
 els['single-file-input'].addEventListener('change', (event) => uploadFiles(event.target.files));

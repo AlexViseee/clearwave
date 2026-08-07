@@ -264,6 +264,95 @@ def _air_gain_db(spectral_centroid_hz: float) -> float:
     return float(np.clip((2_800.0 - spectral_centroid_hz) / 400.0, 0.0, 4.0))
 
 
+def _longest_true_run(values: np.ndarray) -> int:
+    """Return the longest consecutive True sequence without Python sample loops."""
+    if not np.any(values):
+        return 0
+    padded = np.concatenate(([False], values, [False]))
+    changes = np.flatnonzero(padded[1:] != padded[:-1])
+    return int(np.max(changes[1::2] - changes[::2]))
+
+
+def _quality_gate(path: str | Path, target_lufs: float, source_audio: np.ndarray) -> dict[str, Any]:
+    """Run release-blocking technical checks on the rendered master."""
+    audio, sample_rate = _read_audio(path)
+    true_peak = _true_peak_dbtp(audio)
+    sample_peak = float(np.max(np.abs(audio)))
+    near_full_scale = np.abs(audio) >= 0.999
+    clipped_samples = int(np.count_nonzero(near_full_scale))
+    longest_clipped_run = _longest_true_run(np.any(near_full_scale, axis=0))
+    dc_offset = float(np.max(np.abs(np.mean(audio, axis=1))))
+    measured_lufs = _integrated_lufs(audio, sample_rate)
+
+    source_near_full = np.abs(source_audio) >= 0.999
+    source_clip_runs = _longest_true_run(np.any(source_near_full, axis=0))
+    checks = [
+        {
+            "id": "true_peak",
+            "label": "True-peak ceiling",
+            "status": "passed" if true_peak <= -1.0 else "failed",
+            "value": round(true_peak, 2),
+            "unit": "dBTP",
+            "limit": "≤ -1.0 dBTP",
+            "message": "Safe DAC headroom is preserved." if true_peak <= -1.0 else "True peak exceeds the release ceiling.",
+        },
+        {
+            "id": "digital_clipping",
+            "label": "Digital clipping scan",
+            "status": "passed" if clipped_samples == 0 else "failed",
+            "value": clipped_samples,
+            "unit": "samples",
+            "limit": "0 clipped samples",
+            "message": "No full-scale clipping detected." if clipped_samples == 0 else f"{longest_clipped_run} consecutive full-scale samples detected.",
+        },
+        {
+            "id": "dc_offset",
+            "label": "DC offset",
+            "status": "passed" if dc_offset <= 0.02 else "warning",
+            "value": round(dc_offset * 100, 3),
+            "unit": "%",
+            "limit": "≤ 2.0%",
+            "message": "No material DC bias detected." if dc_offset <= 0.02 else "A noticeable DC bias remains in the render.",
+        },
+        {
+            "id": "loudness_target",
+            "label": "Loudness target",
+            "status": "passed" if abs(measured_lufs - target_lufs) <= 2.0 else "warning",
+            "value": round(measured_lufs, 2),
+            "unit": "LUFS",
+            "limit": f"{target_lufs:.1f} LUFS ±2",
+            "message": "The rendered loudness is within the selected target window." if abs(measured_lufs - target_lufs) <= 2.0 else "The limiter or source dynamics kept the render outside the target window.",
+        },
+        {
+            "id": "source_clipping_history",
+            "label": "Source clipping history",
+            "status": "warning" if source_clip_runs >= 3 else "passed",
+            "value": source_clip_runs,
+            "unit": "sample run",
+            "limit": "No sustained full-scale runs",
+            "message": "No sustained clipping was found in the source." if source_clip_runs < 3 else "The source appears to contain existing clipping; mastering cannot fully restore lost detail.",
+        },
+    ]
+    failures = [check["id"] for check in checks if check["status"] == "failed"]
+    warnings = [check["id"] for check in checks if check["status"] == "warning"]
+    return {
+        "approved": not failures,
+        "status": "passed" if not warnings else "warning",
+        "checks": checks,
+        "sample_peak_dbfs": round(-120.0 if sample_peak <= 0 else 20.0 * math.log10(sample_peak), 2),
+    }
+
+
+def _apply_true_peak_safety_trim(path: str | Path, true_peak_dbtp: float) -> None:
+    """Apply the smallest transparent gain trim needed to restore -1.1 dBTP."""
+    audio, sample_rate = _read_audio(path)
+    trim_db = -1.1 - true_peak_dbtp
+    if trim_db >= 0:
+        return
+    audio *= float(10 ** (trim_db / 20.0))
+    sf.write(str(path), audio.T, sample_rate, subtype="PCM_24")
+
+
 def master_file(
     source_path: str | Path,
     destination_path: str | Path,
@@ -324,6 +413,16 @@ def master_file(
     except (RuntimeError, OSError, ValueError) as exc:
         raise AudioProcessingError("Mastering failed while processing the WAV file.") from exc
 
+    quality_gate = _quality_gate(destination_path, target_lufs, audio)
+    if not quality_gate["approved"]:
+        # Pedalboard's limiter is sample-peak based.  A tiny post-render trim
+        # makes the promised true-peak ceiling robust on real DAC playback.
+        true_peak_check = next(check for check in quality_gate["checks"] if check["id"] == "true_peak")
+        _apply_true_peak_safety_trim(destination_path, float(true_peak_check["value"]))
+        quality_gate = _quality_gate(destination_path, target_lufs, audio)
+    if not quality_gate["approved"]:
+        raise AudioProcessingError("Quality gate rejected the master because safe peak or clipping requirements were not met.")
+
     after = analyze_file(destination_path, normalized_genre)
     return {
         "genre": normalized_genre,
@@ -339,4 +438,5 @@ def master_file(
         },
         "before": before,
         "after": after,
+        "quality_gate": quality_gate,
     }
